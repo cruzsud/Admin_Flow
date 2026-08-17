@@ -99,6 +99,7 @@ public sealed class BudgetPersistenceTests : IAsyncLifetime
 
     private static async Task ResetDatabaseAsync(BudgetDbContext context)
     {
+        await context.ExpenseRequests.ExecuteDeleteAsync();
         await context.Budgets.ExecuteDeleteAsync();
         await context.CostCenters.ExecuteDeleteAsync();
     }

@@ -2,7 +2,7 @@
 
 ## Fase Atual
 
-Phase 4 — Budget
+Phase 5 — ExpenseRequest
 
 ## Status
 
@@ -10,115 +10,120 @@ COMPLETE
 
 ## Implementado
 
-- Entidade de domínio `Budget`.
-- Identidade `Guid` e associação por `CostCenterId`.
-- Exercício fiscal entre 1 e 9999.
-- `Allocated` positivo, em `decimal`, com no máximo duas casas decimais.
-- `Committed` iniciado em zero.
-- `Available = Allocated - Committed` calculado pelo domínio.
-- BRL como única moeda implícita do MVP.
-- `DbSet<Budget>` no `BudgetDbContext`.
-- Mapeamento para a tabela `budgets`.
-- Valores financeiros como `numeric(18,2)`.
-- Chave estrangeira restritiva para `cost_centers`.
-- Índice único composto por centro de custo e exercício.
-- Checks de exercício, alocação e compromisso.
-- Migration `AddBudgets`.
-- Testes unitários e testes reais de persistência.
+- Entidade de domínio `ExpenseRequest` com identidade própria.
+- Associação obrigatória por `BudgetId`.
+- Identificação provisória do solicitante por `RequesterId`.
+- Descrição obrigatória, sem espaços nas extremidades.
+- Valor positivo em `decimal`, BRL implícito e no máximo duas casas decimais.
+- Estado inicial `Pending` protegido pela entidade.
+- Enum com a linguagem do workflow: `Pending`, `Approved` e `Rejected`.
+- `DbSet<ExpenseRequest>` no `BudgetDbContext` para inclusão e consulta.
+- Mapeamento para a tabela `expense_requests`.
+- Valor financeiro como `numeric(18,2)`.
+- Chave estrangeira restritiva para `budgets`.
+- Índice para consultas por `budget_id`.
+- Checks de valor positivo e status válido.
+- Migration `AddExpenseRequests`.
+- Testes unitários e testes reais de persistência e consulta.
 
-Não foram criados caso de uso, endpoint ou operação de comprometer orçamento.
+Não foram criados casos de uso, endpoints, aprovação, rejeição ou alteração do orçamento.
 
 ## Arquitetura
 
 ```text
 Domain
-  Budget -> CostCenterId
+  CostCenter
+    <- Budget
+         <- ExpenseRequest (Pending)
 
 Infrastructure
   BudgetDbContext
     -> CostCenters
     -> Budgets
-  BudgetConfiguration
+    -> ExpenseRequests
+  ExpenseRequestConfiguration
     -> PostgreSQL
 ```
 
-Domain continua sem EF Core. `Available` não é armazenado porque é derivado de `Allocated` e `Committed`; persistir o valor calculado criaria risco de inconsistência.
-
-Não foram criados repository, serviço genérico, CQRS ou MediatR.
+O Domain continua independente do EF Core. A Infrastructure adapta a entidade ao PostgreSQL. O `BudgetDbContext` é suficiente nesta fase; não foram adicionados repository genérico, CQRS, MediatR ou serviço genérico.
 
 ## Domínio Atual
 
 ```text
 CostCenter
   └── Budget por exercício
-        Allocated
-        Committed = 0
-        Available = Allocated - Committed
+        ├── Allocated
+        ├── Committed = 0
+        ├── Available = Allocated - Committed
+        └── ExpenseRequest
+              Amount
+              RequesterId
+              Description
+              Status = Pending
 ```
 
-`Budget` nasce válido e sem transições de estado. A futura aprovação será responsável por comprometer saldo; essa operação não foi antecipada.
+Criar uma solicitação pendente não altera `Committed` nem `Available`. Os estados terminais foram nomeados para formar a linguagem do domínio, mas nenhuma transição para eles existe ainda.
 
 ## Testes
 
 O ciclo Red/Green/Refactor foi aplicado:
 
-1. Red: testes falharam porque `Budget` não existia.
-2. Green: a entidade mínima satisfez invariantes e cálculo.
-3. Refactor: persistência e testes foram organizados sem novas abstrações.
+1. Red: os testes falharam porque `ExpenseRequest` ainda não existia.
+2. Green: a entidade mínima satisfez criação, normalização e invariantes.
+3. Refactor: mapeamento e consultas foram adicionados sem abstrações extras.
 
 Validação contra PostgreSQL 17 real em container:
 
-- migrations `InitialCreate` e `AddBudgets` aplicadas;
-- orçamento persistido e reconstruído corretamente;
-- mesmo exercício permitido para centros diferentes;
-- duplicidade de centro/exercício rejeitada;
-- centro inexistente rejeitado pela FK;
-- 16 testes unitários aprovados;
-- 9 testes de integração aprovados;
-- total: 25 aprovados, 0 falhas, 0 ignorados;
-- build: 0 erros e 0 avisos;
-- modelo EF sem mudanças pendentes.
+- migrations `InitialCreate`, `AddBudgets` e `AddExpenseRequests` aplicadas;
+- solicitação persistida e reconstruída corretamente;
+- orçamento inexistente rejeitado pela chave estrangeira;
+- consulta por orçamento retorna apenas suas solicitações;
+- 25 testes unitários aprovados;
+- 12 testes de integração aprovados;
+- total: 37 aprovados, 0 falhas, 0 ignorados nos testes com banco;
+- build: 0 erros e 0 avisos.
 
-Sem `ADMINFLOW_TEST_DB_CONNECTION_STRING`, os 6 testes PostgreSQL são ignorados explicitamente e os 3 testes técnicos continuam executando.
+Sem `ADMINFLOW_TEST_DB_CONNECTION_STRING`, os testes PostgreSQL são ignorados explicitamente e os testes técnicos continuam executando.
 
 ## Segurança
 
-- Nenhum secret novo foi criado.
-- Testes usam senha efêmera em memória.
-- Operações normais continuam parametrizadas por EF Core/Npgsql.
-- A FK e as constraints protegem integridade mesmo fora da aplicação.
+- Nenhum secret foi criado ou armazenado no repositório.
+- A senha usada nos testes foi efêmera e limitada ao processo local.
+- `RequesterId` ainda é informado pelo chamador e não representa identidade autenticada.
+- EF Core/Npgsql parametrizam as operações normais.
+- Chave estrangeira e constraints reforçam integridade no banco.
 
 ## Decisões Importantes
 
-- O modelo orçamentário documentado na Fase 0 foi materializado sem alterações semânticas.
-- `decimal` foi suficiente; um value object `Money` não se justifica com moeda única.
-- `Available` é calculado, não persistido.
-- Não existe método `Commit` ainda, pois compromisso acontece no fluxo de aprovação.
-- Um orçamento é único por `(CostCenterId, FiscalYear)`.
-- Exclusão de centro com orçamento é restrita pelo PostgreSQL.
-- Nenhum ADR novo foi necessário; a arquitetura de persistência já está registrada no ADR-002.
+- Uma solicitação nasce diretamente `Pending`; não existem `Draft` nem submissão separada no MVP.
+- Criação pendente não reserva saldo.
+- `RequesterId` foi incluído agora para sustentar futuramente a regra de não autoaprovação.
+- Descrição usa `text`; nenhum limite arbitrário foi criado sem requisito.
+- O enum contém os três estados planejados, mas as transições ficam na Fase 6.
+- Não foi necessário novo ADR; a separação Domain/Infrastructure e o uso de EF Core já estão registrados.
 
 ## Problemas Conhecidos
 
-- Ainda não há caso de uso ou endpoint para criar/consultar centros e orçamentos.
-- `Committed` permanece sempre zero até o fluxo de aprovação.
-- Suplementação, redução, encerramento e cancelamento não existem.
+- Ainda não há casos de uso ou endpoints HTTP para criar e consultar entidades.
+- `RequesterId` não é autenticado.
+- `Committed` permanece zero até o fluxo de aprovação.
+- Ainda não há registro de decisor, data da decisão ou motivo de rejeição.
 - O health check ainda não verifica prontidão do PostgreSQL.
-- Formato e normalização de código de centro continuam pendentes.
+- Formato e normalização do código de centro continuam pendentes.
 
 ## Trabalho Adiado
 
-- Casos de uso e endpoints de `CostCenter` e `Budget`.
-- `ExpenseRequest` e fluxo de aprovação.
-- Concorrência para compromisso orçamentário.
+- Aprovação e rejeição de `ExpenseRequest`.
+- Compromisso atômico do orçamento e controle de concorrência.
+- Casos de uso e endpoints de `CostCenter`, `Budget` e `ExpenseRequest`.
 - FluentValidation, autenticação, autorização e auditoria.
 - Serilog, RabbitMQ, OpenTelemetry e AdminFlow.People.
 - Redis, que não possui requisito atual.
 
 ## Próxima Fase
 
-Phase 5 — ExpenseRequest
+Phase 6 — Fluxo de Aprovação
 
-Implementar criação pendente, consulta conceitual, validação e persistência de `ExpenseRequest`, referenciando um orçamento existente. Aprovação, rejeição e alteração de saldo permanecem para a Fase 6.
+Implementar transições de aprovação e rejeição, impedir decisões repetidas, exigir saldo suficiente, comprometer o orçamento de forma atômica e tratar concorrência. Casos de uso e endpoints devem ser delimitados no checkpoint da fase.
 
 Não iniciar sem autorização explícita.

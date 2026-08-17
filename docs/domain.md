@@ -137,6 +137,20 @@ new Budget(costCenterId, fiscalYear, allocated)
 - **Invariantes:** valor maior que zero; descrição e solicitante obrigatórios; apenas uma decisão terminal; rejeição exige motivo.
 - **Lifecycle:** criada como `Pending`; termina como `Approved` ou `Rejected`.
 
+Implementado na Fase 5:
+
+```text
+ExpenseRequest
+  Id
+  BudgetId
+  RequesterId
+  Description
+  Amount (decimal, BRL)
+  Status = Pending
+```
+
+A criação valida referências não vazias, descrição obrigatória e normalizada, valor positivo com no máximo duas casas decimais e estado inicial `Pending`. Os estados `Approved` e `Rejected` já fazem parte da linguagem do domínio, mas suas transições e dados de decisão só serão implementados na Fase 6.
+
 ### Conceitos adiados
 
 - **Department:** sua relação com centros de custo ainda não altera nenhuma decisão do MVP.

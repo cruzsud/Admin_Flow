@@ -161,7 +161,21 @@ API -> Application -> Domain -> Infrastructure -> PostgreSQL
 5. **PostgreSQL:** aplica constraints e confirma atomicamente a alteração.
 6. **API:** devolve `200`, ou mapeia ausência para `404`, validação para `400` e conflito de estado/saldo/concorrência para `409`.
 
-PostgreSQL e a persistência básica de `CostCenter` já existem. O fluxo transacional de aprovação mostrado acima continua apenas planejado, pois `Budget` e `ExpenseRequest` ainda não foram implementados.
+PostgreSQL e a persistência de `CostCenter`, `Budget` e `ExpenseRequest` já existem. O fluxo transacional de aprovação mostrado acima continua apenas planejado: ainda não há transições de aprovação/rejeição nem alteração de saldo.
+
+## Persistência de ExpenseRequest
+
+```text
+Domain: ExpenseRequest
+          |
+          v
+Infrastructure: ExpenseRequestConfiguration
+          |
+          v
+PostgreSQL: expense_requests -> budgets
+```
+
+`BudgetDbContext` expõe `ExpenseRequests` para inclusão e consulta. O mapeamento mantém a entidade de domínio independente do EF Core, persiste o status como inteiro, cria índice por `budget_id` e impede no banco solicitações associadas a orçamento inexistente. Casos de uso e endpoints continuam adiados; não foi criada uma abstração de repository porque o `DbContext` já atende à persistência desta fase.
 
 ## Roadmap revisado
 
