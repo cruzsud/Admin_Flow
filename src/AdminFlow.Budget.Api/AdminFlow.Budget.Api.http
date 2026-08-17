@@ -1,0 +1,11 @@
+@AdminFlow.Budget.Api_HostAddress = http://localhost:5202
+
+GET {{AdminFlow.Budget.Api_HostAddress}}/health
+Accept: application/json
+
+###
+
+GET {{AdminFlow.Budget.Api_HostAddress}}/swagger/v1/swagger.json
+Accept: application/json
+
+###

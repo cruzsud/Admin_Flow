@@ -1,0 +1,33 @@
+# AdminFlow local instructions and Codex configuration
+/.codex/
+/AGENTS.md
+
+# .NET build artifacts
+**/bin/
+**/obj/
+
+# Test results and coverage
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# IDE and user-specific files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+
+# Logs and operating-system files
+*.log
+.DS_Store
+Thumbs.db
