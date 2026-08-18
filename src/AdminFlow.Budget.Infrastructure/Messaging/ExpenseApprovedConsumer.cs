@@ -10,7 +10,7 @@ namespace AdminFlow.Budget.Infrastructure.Messaging;
 internal sealed class ExpenseApprovedConsumer(
     RabbitMqOptions options,
     ILogger<ExpenseApprovedConsumer> logger,
-    IExpenseApprovedIntegrationEventHandler handler) : BackgroundService
+    IExpenseApprovedIntegrationEventProcessor processor) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -107,7 +107,7 @@ internal sealed class ExpenseApprovedConsumer(
                     return;
                 }
 
-                await handler.HandleAsync(integrationEvent, stoppingToken);
+                await processor.ProcessAsync(integrationEvent, stoppingToken);
 
                 await channel.BasicAckAsync(
                     eventArgs.DeliveryTag,

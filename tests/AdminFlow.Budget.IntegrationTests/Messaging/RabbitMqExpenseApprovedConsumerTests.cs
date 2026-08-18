@@ -26,8 +26,8 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
         var (options, factory) = CreateConfiguration();
         await PrepareQueueAsync(factory);
         var logger = new CollectingLogger<ExpenseApprovedConsumer>();
-        var handler = new RecordingHandler();
-        using var consumer = new ExpenseApprovedConsumer(options, logger, handler);
+        var processor = new RecordingProcessor();
+        using var consumer = new ExpenseApprovedConsumer(options, logger, processor);
         await consumer.StartAsync(CancellationToken.None);
         var integrationEvent = new ExpenseApprovedIntegrationEvent(
             Guid.NewGuid(),
@@ -39,7 +39,7 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
             DateTimeOffset.UtcNow);
 
         await PublishAsync(factory, JsonSerializer.SerializeToUtf8Bytes(integrationEvent));
-        await WaitUntilAsync(() => handler.CallCount == 1);
+        await WaitUntilAsync(() => processor.CallCount == 1);
         await Task.Delay(100);
         await consumer.StopAsync(CancellationToken.None);
 
@@ -55,7 +55,7 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
         using var consumer = new ExpenseApprovedConsumer(
             options,
             logger,
-            new RecordingHandler());
+            new RecordingProcessor());
         await consumer.StartAsync(CancellationToken.None);
 
         await PublishAsync(factory, "not-json"u8.ToArray());
@@ -72,15 +72,15 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
     {
         var (options, factory) = CreateConfiguration();
         await PrepareQueueAsync(factory);
-        var handler = new RecordingHandler(failuresBeforeSuccess: 1);
+        var processor = new RecordingProcessor(failuresBeforeSuccess: 1);
         using var consumer = new ExpenseApprovedConsumer(
             options,
             new CollectingLogger<ExpenseApprovedConsumer>(),
-            handler);
+            processor);
         await consumer.StartAsync(CancellationToken.None);
 
         await PublishAsync(factory, CreateValidBody());
-        await WaitUntilAsync(() => handler.CallCount == 2);
+        await WaitUntilAsync(() => processor.CallCount == 2);
         await Task.Delay(200);
         await consumer.StopAsync(CancellationToken.None);
 
@@ -94,11 +94,11 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
     {
         var (options, factory) = CreateConfiguration();
         await PrepareQueueAsync(factory);
-        var handler = new RecordingHandler(failuresBeforeSuccess: int.MaxValue);
+        var processor = new RecordingProcessor(failuresBeforeSuccess: int.MaxValue);
         using var consumer = new ExpenseApprovedConsumer(
             options,
             new CollectingLogger<ExpenseApprovedConsumer>(),
-            handler);
+            processor);
         await consumer.StartAsync(CancellationToken.None);
 
         await PublishAsync(factory, CreateValidBody());
@@ -106,7 +106,7 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
             await GetMessageCountAsync(factory, DeadLetterQueue) == 1);
         await consumer.StopAsync(CancellationToken.None);
 
-        Assert.Equal(options.MaxRetryAttempts + 1, handler.CallCount);
+        Assert.Equal(options.MaxRetryAttempts + 1, processor.CallCount);
         Assert.Equal((uint)0, await GetMessageCountAsync(factory));
         Assert.Equal((uint)0, await GetMessageCountAsync(factory, RetryQueue));
         Assert.Equal((uint)1, await GetMessageCountAsync(factory, DeadLetterQueue));
@@ -239,16 +239,16 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
                 DateTimeOffset.UtcNow));
     }
 
-    private sealed class RecordingHandler(int failuresBeforeSuccess = 0)
-        : IExpenseApprovedIntegrationEventHandler
+    private sealed class RecordingProcessor(int failuresBeforeSuccess = 0)
+        : IExpenseApprovedIntegrationEventProcessor
     {
         private int _callCount;
 
         public int CallCount => _callCount;
 
-        public Task HandleAsync(
+        public Task<bool> ProcessAsync(
             ExpenseApprovedIntegrationEvent integrationEvent,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken = default)
         {
             var currentCall = Interlocked.Increment(ref _callCount);
             if (currentCall <= failuresBeforeSuccess)
@@ -256,7 +256,7 @@ public sealed class RabbitMqExpenseApprovedConsumerTests
                 throw new InvalidOperationException("Simulated transient failure.");
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
     }
 

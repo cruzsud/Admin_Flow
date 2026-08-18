@@ -15,6 +15,9 @@ public sealed class BudgetDbContext(DbContextOptions<BudgetDbContext> options)
 
     public DbSet<ExpenseRequest> ExpenseRequests => Set<ExpenseRequest>();
 
+    internal DbSet<ProcessedIntegrationEvent> ProcessedIntegrationEvents =>
+        Set<ProcessedIntegrationEvent>();
+
     public Task<ExpenseRequest?> FindExpenseRequestAsync(
         Guid expenseRequestId,
         CancellationToken cancellationToken = default)

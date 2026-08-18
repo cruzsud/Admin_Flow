@@ -284,9 +284,23 @@ adminflow.budget.expense-approved
   └── inválida/esgotada -> adminflow.budget.expense-approved.dead-letter
 ```
 
-O corpo bruto nunca é registrado. Idempotência, uma possível estratégia Outbox e publisher confirms continuam pendentes nos próximos incrementos. O republish explícito para a DLQ seguido de `Ack` possui uma janela de perda caso o broker falhe antes de confirmar internamente a publicação.
+Na Fase 9.3, o consumidor passou a delegar o processamento a um componente idempotente. Antes de chamar o handler, ele abre uma transação no PostgreSQL e insere o `EventId` na tabela `processed_integration_events`. A chave primária impede que duas entregas, inclusive concorrentes, processem o mesmo evento. O commit ocorre somente depois do handler; uma falha causa rollback e permite que o retry tente novamente.
 
-O evento comunica um fato já confirmado; o consumidor não participa da decisão síncrona de aprovação. Antes de implementar será necessário decidir como evitar a perda entre commit no banco e publicação (por exemplo, avaliar outbox), mas essa decisão não será antecipada na Fase 0. RabbitMQ não exige um microserviço publicador separado.
+```text
+ExpenseApprovedConsumer
+  -> IdempotentExpenseApprovedIntegrationEventProcessor
+       -> IDbContextFactory<BudgetDbContext>
+       -> INSERT event_id (chave primária)
+       -> IExpenseApprovedIntegrationEventHandler
+       -> COMMIT
+  -> Ack
+```
+
+`IDbContextFactory` é usado porque o consumidor hospedado é singleton e precisa criar um `BudgetDbContext` independente por entrega. A tabela de deduplicação é técnica e permanece na Infrastructure; nenhuma dependência de EF Core ou RabbitMQ foi adicionada ao Domain.
+
+O corpo bruto nunca é registrado. A garantia idempotente cobre a coordenação no PostgreSQL, mas efeitos externos não transacionais ainda podem repetir após uma queda no instante crítico. Uma possível estratégia Outbox e publisher confirms continuam pendentes. O republish explícito para a DLQ seguido de `Ack` possui uma janela de perda caso o broker falhe antes de confirmar internamente a publicação.
+
+O evento comunica um fato já confirmado; o consumidor não participa da decisão síncrona de aprovação. Ainda será necessário avaliar Outbox para evitar perda entre commit no banco e publicação. RabbitMQ não exige um microserviço publicador separado.
 
 Redis não resolve nenhum problema atual e permanece fora do escopo.
 

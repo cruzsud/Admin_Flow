@@ -2,80 +2,85 @@
 
 ## Fase Atual
 
-Phase 9 — Confiabilidade do RabbitMQ
+Fase 9 — Confiabilidade do RabbitMQ
 
 ## Status
 
-IN PROGRESS — Etapa 9.2 concluída
+CONCLUÍDA — Etapas 9.1, 9.2 e 9.3 concluídas
 
-## Implementado nesta etapa
+## Implementado
 
-- Retry limitado para falhas transitórias, sem `requeue=true` imediato.
-- Fila de retry com TTL configurável; ao expirar, a mensagem retorna à fila principal.
-- Contagem de tentativas pelo cabeçalho `x-death` mantido pelo RabbitMQ.
-- Dead-letter queue (DLQ) para mensagens inválidas ou que esgotaram as tentativas.
-- Política padrão de 3 retries com intervalo de 5 segundos.
-- Handler separado da entrega para permitir simular sucesso e falha nos testes.
-- Validação das opções de retry durante a inicialização.
-- ADR-007 documentando topologia, política e trade-offs.
+- Acknowledgement manual depois do processamento.
+- Retry limitado com fila de espera, TTL e contagem pelo cabeçalho `x-death`.
+- Dead-letter queue para mensagens inválidas ou com tentativas esgotadas.
+- Processador idempotente baseado no `EventId` do evento.
+- Tabela técnica `processed_integration_events`, com chave primária em `event_id`.
+- Transação que desfaz a marcação quando o handler falha.
+- Proteção contra duplicatas sequenciais e concorrentes pelo PostgreSQL.
+- Migration `AddProcessedIntegrationEvents`.
+- ADRs 006, 007 e 008 documentando as decisões de confiabilidade.
 
-## Fluxo Atual
+## Arquitetura Atual
 
 ```text
-fila principal
-  ├── processada com sucesso -----------> Ack
-  ├── JSON/contrato inválido -----------> DLQ
-  └── falha transitória
-        ├── tentativas disponíveis ------> fila de retry --TTL--> fila principal
-        └── tentativas esgotadas --------> DLQ
+RabbitMQ
+  -> ExpenseApprovedConsumer
+  -> valida contrato
+  -> IdempotentExpenseApprovedIntegrationEventProcessor
+       -> inicia transação PostgreSQL
+       -> insere EventId único
+       -> executa handler
+       -> commit
+  -> Ack
 ```
+
+Uma duplicata encontra a chave já persistida, não executa o handler e recebe `Ack`. Se o handler falhar, a transação é revertida e a política de retry continua aplicável.
 
 ## Testes
 
-- mensagem válida é processada e confirmada;
-- mensagem inválida é encaminhada à DLQ;
-- falha transitória é repetida e concluída com sucesso;
-- esgotamento do limite encaminha a mensagem à DLQ;
-- contagem de `x-death` considera somente mortes na fila principal;
+- primeira entrega é processada e registrada;
+- duplicata sequencial não chama o handler novamente;
+- duplicatas concorrentes resultam em uma única chamada;
+- falha do handler reverte a marcação e permite retry;
+- regressões de acknowledgement, retry e DLQ continuam protegidas;
 - 53 testes unitários/Application;
-- 29 testes de integração/técnicos com PostgreSQL e RabbitMQ reais;
-- total: 82 aprovados, 0 falhas, 0 ignorados.
+- 32 testes de integração/técnicos com PostgreSQL e RabbitMQ reais;
+- total: 85 aprovados, 0 falhas, 0 ignorados.
 
 ## Segurança
 
-- Corpo das mensagens não é registrado nos logs.
-- Credenciais continuam fora do repositório.
-- Mensagens são validadas antes do processamento.
+- A tabela técnica armazena somente `EventId`, tipo e instante do processamento.
+- Corpo das mensagens e credenciais não são registrados.
+- Consultas e inserções continuam parametrizadas pelo EF Core.
 - Nenhum pacote novo foi adicionado nesta etapa.
-- A DLQ contém dados financeiros do evento e deve ter acesso operacional restrito.
 
 ## Decisões Importantes
 
-- A fila principal usa dead-letter exchange para encaminhar falhas à fila de retry.
-- A fila de retry usa TTL e devolve as mensagens à exchange principal.
-- O número de mortes na fila principal, registrado em `x-death`, define o limite.
-- Mensagens inválidas não consomem retries e seguem diretamente para a DLQ.
-- O padrão inicial é intervalo fixo; backoff progressivo foi adiado.
+- A idempotência pertence à Infrastructure e não altera o Domain financeiro.
+- PostgreSQL foi reutilizado em vez de adicionar Redis.
+- A chave primária fornece exclusão concorrente, evitando o padrão inseguro de apenas consultar antes de inserir.
+- A marcação e o handler ficam dentro de uma transação para permitir rollback em falhas.
+- `AddDbContextFactory` fornece contextos independentes ao consumidor hospedado e mantém o `BudgetDbContext` disponível por escopo para os casos de uso atuais.
 
 ## Problemas Conhecidos
 
-- O republish explícito para a DLQ ainda não usa publisher confirms; uma falha do broker entre publicação e `Ack` pode causar perda.
-- Filas duráveis criadas pela topologia anterior precisam ser recriadas ao adotar os novos argumentos de dead-letter; o Compose local não persiste dados do RabbitMQ, mas uma implantação real exigirá migração operacional.
-- Não há idempotência; uma mensagem pode produzir o mesmo efeito mais de uma vez.
-- Existe janela de falha entre commit do PostgreSQL e publicação.
-- Producer ainda abre conexão/canal por publicação.
+- A garantia cobre a marcação no PostgreSQL, mas não torna atômicos efeitos externos como HTTP, arquivo ou log; esses efeitos ainda podem repetir após uma queda no instante crítico.
+- A tabela de eventos processados ainda não possui política de retenção.
+- O republish explícito para a DLQ ainda não usa publisher confirms.
+- Existe janela de falha entre o commit da aprovação e a publicação do evento; Outbox ainda não foi implementado.
+- Producer abre conexão/canal por publicação.
 - Ainda não há endpoint HTTP de negócio.
 
 ## Trabalho Adiado
 
-- Idempotência do consumidor.
+- Política de retenção da inbox técnica.
 - Avaliação de Outbox e publisher confirms.
-- Backoff progressivo e política operacional de retenção/alerta da DLQ.
+- Backoff progressivo e operação/monitoramento da DLQ.
 - Reconexão e reutilização de conexão/canal.
-- Endpoints, autenticação, autorização e OpenTelemetry.
+- Endpoints, autenticação e autorização.
 
-## Próxima Etapa
+## Próxima Fase
 
-Phase 9.3 — Idempotência do consumidor
+Fase 10 — Observabilidade com OpenTelemetry
 
-Impedir que uma nova entrega do mesmo evento repita seu efeito de negócio. Não iniciar sem autorização explícita.
+Introduzir traces e métricas somente para os componentes já existentes, começando pelo problema concreto de correlacionar execução da API, PostgreSQL e RabbitMQ. Não iniciar sem autorização explícita.

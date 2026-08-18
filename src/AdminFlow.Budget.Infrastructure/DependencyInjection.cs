@@ -16,7 +16,7 @@ public static class DependencyInjection
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        services.AddDbContext<BudgetDbContext>(options =>
+        services.AddDbContextFactory<BudgetDbContext>(options =>
             options.UseNpgsql(connectionString));
         services.AddScoped<IExpenseApprovalStore>(services =>
             services.GetRequiredService<BudgetDbContext>());
@@ -34,6 +34,8 @@ public static class DependencyInjection
             services.AddSingleton<IExpenseApprovedPublisher, RabbitMqExpenseApprovedPublisher>();
             services.AddSingleton<IExpenseApprovedIntegrationEventHandler,
                 LoggingExpenseApprovedIntegrationEventHandler>();
+            services.AddSingleton<IExpenseApprovedIntegrationEventProcessor,
+                IdempotentExpenseApprovedIntegrationEventProcessor>();
             services.AddHostedService<ExpenseApprovedConsumer>();
         }
         else
