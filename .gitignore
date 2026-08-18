@@ -1,7 +1,3 @@
-# AdminFlow local instructions and Codex configuration
-/.codex/
-/AGENTS.md
-
 # .NET build artifacts
 **/bin/
 **/obj/
