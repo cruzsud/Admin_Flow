@@ -2,111 +2,80 @@
 
 ## Fase Atual
 
-Phase 8 — Fundamentos de RabbitMQ
+Phase 9 — Confiabilidade do RabbitMQ
 
 ## Status
 
-COMPLETE
+IN PROGRESS — Etapa 9.1 concluída
 
-## Implementado
+## Implementado nesta etapa
 
-- Contrato `ExpenseApprovedIntegrationEvent` na Application.
-- Abstração `IExpenseApprovedPublisher` independente do RabbitMQ.
-- Publicação somente após aprovação persistida.
-- Rejeições não publicam evento de aprovação.
-- Producer com RabbitMQ.Client 7.2.2.
-- Exchange direto durável `adminflow.budget`.
-- Routing key `expense.approved`.
-- Fila durável `adminflow.budget.expense-approved`.
-- Mensagem JSON persistente com `EventId` como `MessageId`.
-- Consumer simples como `BackgroundService`.
-- Consumer desserializa e registra recebimento estruturado.
-- RabbitMQ 4.1 Management no Docker Compose.
-- Integração habilitável por configuração.
-- Credenciais exclusivamente por ambiente.
-- Teste real de publicação e desserialização.
-- ADR-005 documentando escolhas e limitações.
+- Consumidor alterado de `autoAck=true` para `autoAck=false`.
+- `BasicAck` somente depois de desserialização, validação e processamento.
+- `BasicNack` sem requeue para JSON ou contrato inválido.
+- `BasicNack` com requeue para falha inesperada potencialmente transitória.
+- Validação técnica de identificadores, valor positivo, moeda BRL e instante.
+- Logs de falha limitados ao `MessageId`; corpo bruto não é registrado.
+- ADR-006 documentando acknowledgement manual e trade-offs.
+- README e arquitetura atualizados.
 
-## Arquitetura
+## Fluxo Atual
 
 ```text
-Application
-  ExpenseApprovalService
-    -> IExpenseApprovedPublisher
-    -> ExpenseApprovedIntegrationEvent
-
-Infrastructure
-  RabbitMqExpenseApprovedPublisher
-  ExpenseApprovedConsumer
-    -> RabbitMQ
-
-Domain
-  sem dependência de mensageria
+RabbitMQ entrega mensagem sem confirmação automática
+  ├── evento válido e processado -> Ack -> remove da fila
+  ├── JSON/contrato inválido ----> Nack sem requeue -> descarta
+  └── falha inesperada ----------> Nack com requeue -> nova entrega
 ```
-
-## Evento
-
-`ExpenseApprovedIntegrationEvent` contém:
-
-- `EventId`;
-- `ExpenseRequestId`;
-- `BudgetId`;
-- `DecisionMakerId`;
-- `Amount`;
-- `Currency = BRL`;
-- `ApprovedAt`.
-
-Descrição e motivo de rejeição não são publicados.
 
 ## Testes
 
-- aprovação persistida publica exatamente um evento;
-- falha de persistência não publica;
-- rejeição não publica;
-- contrato contém os valores esperados;
-- producer entrega JSON válido em RabbitMQ real;
-- 53 testes unitários/Application aprovados;
-- 16 testes de integração esperados com PostgreSQL e RabbitMQ;
-- total esperado: 69 aprovados, 0 falhas, 0 ignorados.
+- contrato completo aceito;
+- identificador vazio rejeitado;
+- valor zero ou negativo rejeitado;
+- moeda diferente de BRL rejeitada;
+- instante vazio rejeitado;
+- evento válido consumido e removido da fila após confirmação;
+- JSON inválido rejeitado sem retornar à fila;
+- 53 testes unitários/Application existentes;
+- 24 testes de integração/técnicos esperados com infraestrutura completa;
+- total esperado: 77 aprovados, 0 falhas, 0 ignorados.
 
 ## Segurança
 
-- Nenhuma credencial RabbitMQ foi versionada.
-- Senha é recebida por `RabbitMq:Password`/variável de ambiente.
-- Configuração habilitada exige usuário e senha não vazios.
-- Evento não contém secrets, descrição ou motivo de rejeição.
-- Pacote RabbitMQ.Client foi consultado no catálogo de vulnerabilidades do NuGet sem alerta reportado.
+- Corpo de mensagem inválida não é registrado.
+- Credenciais continuam fora do repositório.
+- Mensagens são validadas antes do processamento.
+- Nenhum pacote novo foi adicionado nesta etapa.
 
 ## Decisões Importantes
 
-- O evento é de integração, não entidade nem mensagem criada pelo Domain.
-- Publicação ocorre depois do commit do PostgreSQL.
-- RabbitMQ pode permanecer desabilitado para execução sem broker.
-- Producer e consumer ficam na Infrastructure.
-- Consumidor inicial apenas registra o fato recebido.
-- ADR-005 registra a fundação e os riscos aceitos.
+- A Fase 9 foi dividida para introduzir um conceito de confiabilidade por vez.
+- Mensagem inválida não retorna à fila para evitar loop infinito.
+- Falha inesperada retorna temporariamente à fila, ainda sem limite ou atraso.
+- ADR-006 registra a política atual de Ack/Nack.
 
 ## Problemas Conhecidos
 
+- `requeue=true` pode causar repetição rápida e ilimitada.
+- Mensagem inválida é descartada porque a DLQ ainda não existe.
+- Não há retry com atraso, limite de tentativas ou backoff.
+- Não há idempotência.
 - Existe janela de falha entre commit do PostgreSQL e publicação.
-- Consumer usa `autoAck=true`.
-- Não há retry, DLQ, idempotência ou publisher confirms.
-- Producer abre conexão/canal por publicação; otimização foi adiada.
-- Ainda não há endpoint HTTP de negócio para acionar o fluxo.
-- RabbitMQ desabilitado usa publisher sem operação para manter desenvolvimento local simples.
+- Producer ainda abre conexão/canal por publicação.
+- Ainda não há endpoint HTTP de negócio.
 
 ## Trabalho Adiado
 
-- Acknowledgement manual, retry, dead-letter queue e idempotência.
-- Avaliação de Outbox transacional.
-- Reconexão e reutilização eficiente de conexões/canais.
-- Endpoints HTTP, autenticação e autorização.
-- OpenTelemetry e AdminFlow.People.
+- Retry limitado com atraso.
+- Dead-letter queue.
+- Idempotência do consumidor.
+- Avaliação de Outbox e publisher confirms.
+- Reconexão e reutilização de conexão/canal.
+- Endpoints, autenticação, autorização e OpenTelemetry.
 
-## Próxima Fase
+## Próxima Etapa
 
-Phase 9 — Confiabilidade do RabbitMQ
+Phase 9.2 — Retry limitado e Dead-Letter Queue
 
-Introduzir progressivamente acknowledgement, tratamento de falhas, retry, dead-letter queue e idempotência, avaliando também a lacuna entre banco e publicação. Não implementar tudo sem novo checkpoint e delimitação didática.
-
-Não iniciar sem autorização explícita.
+Substituir o requeue imediato por uma política explícita com atraso, limite de tentativas e encaminhamento final para DLQ. Não iniciar sem autorização explícita.

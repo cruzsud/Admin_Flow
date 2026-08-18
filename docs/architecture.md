@@ -271,7 +271,9 @@ O contrato do evento e a interface de publicação ficam na Application. O clien
 
 O evento contém `EventId`, `ExpenseRequestId`, `BudgetId`, `DecisionMakerId`, `Amount`, `Currency` e `ApprovedAt`. Ele representa um fato já confirmado; rejeições não publicam evento de aprovação. A fila e o exchange são duráveis e as mensagens são marcadas como persistentes, mas confirmações do broker ainda não foram implementadas.
 
-Nesta fase, a publicação acontece depois do commit do PostgreSQL. Isso impede publicar uma aprovação não persistida, mas deixa uma janela de falha entre banco e broker. O consumidor usa `autoAck=true`. Retry, acknowledgement manual, DLQ, idempotência e uma possível estratégia Outbox ficam deliberadamente para a Fase 9.
+Nesta fase, a publicação acontece depois do commit do PostgreSQL. Isso impede publicar uma aprovação não persistida, mas deixa uma janela de falha entre banco e broker.
+
+Na Fase 9.1, o consumidor passou a usar `autoAck=false`. Um evento válido recebe `BasicAck` somente depois do processamento. JSON ou contrato inválido recebe `BasicNack` sem retorno à fila; falha inesperada recebe `BasicNack` com retorno. O corpo bruto nunca é registrado. Retry com atraso e limite, DLQ, idempotência e uma possível estratégia Outbox continuam pendentes nos próximos incrementos da Fase 9.
 
 O evento comunica um fato já confirmado; o consumidor não participa da decisão síncrona de aprovação. Antes de implementar será necessário decidir como evitar a perda entre commit no banco e publicação (por exemplo, avaliar outbox), mas essa decisão não será antecipada na Fase 0. RabbitMQ não exige um microserviço publicador separado.
 

@@ -201,7 +201,7 @@ ExpenseApprovedConsumer
 
 O evento transporta identificadores, valor, moeda e instante da aprovação. Ele não transporta descrição, motivo de rejeição ou credenciais.
 
-A implementação atual é propositalmente básica. Ainda não existem confirmação manual, retry, dead-letter queue, idempotência ou Outbox transacional.
+A implementação usa confirmação manual: mensagens válidas recebem `Ack` somente depois do processamento. Ainda não existem retry com atraso e limite, dead-letter queue, idempotência ou Outbox transacional.
 
 ## Compilação e testes
 
@@ -261,7 +261,7 @@ Na conclusão da Fase 8, o resultado validado foi:
 - [x] fluxo de aprovação;
 - [x] logging estruturado;
 - [x] fundamentos de RabbitMQ;
-- [ ] confiabilidade do RabbitMQ;
+- [ ] confiabilidade do RabbitMQ — acknowledgement manual concluído; retry, DLQ e idempotência pendentes;
 - [ ] OpenTelemetry;
 - [ ] autenticação e autorização;
 - [ ] AdminFlow.People;

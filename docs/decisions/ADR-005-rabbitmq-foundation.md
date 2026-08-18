@@ -22,5 +22,5 @@ RabbitMQ é opcional por configuração. Credenciais são recebidas por variáve
 - Produtor e consumidor simples tornam o fluxo assíncrono demonstrável.
 - Domain e Application não dependem do cliente RabbitMQ.
 - Se a publicação falhar depois do commit, a aprovação já estará persistida e o evento poderá ser perdido.
-- `autoAck=true` pode perder mensagem se o consumidor falhar durante o processamento.
-- Retry, DLQ, idempotência, confirmação manual e Outbox permanecem pendentes para a Fase 9.
+- A confirmação automática original foi substituída por acknowledgement manual na Fase 9.1, conforme ADR-006.
+- Retry, DLQ, idempotência e Outbox permanecem pendentes para os próximos incrementos da Fase 9.

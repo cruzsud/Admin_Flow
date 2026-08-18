@@ -7,6 +7,7 @@ using RabbitMQ.Client;
 
 namespace AdminFlow.Budget.IntegrationTests.Messaging;
 
+[Collection(RabbitMqCollection.Name)]
 public sealed class RabbitMqExpenseApprovedPublisherTests
 {
     private const string Exchange = "adminflow.budget";

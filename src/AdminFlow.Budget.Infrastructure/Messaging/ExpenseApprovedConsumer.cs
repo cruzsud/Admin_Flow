@@ -44,27 +44,68 @@ internal sealed class ExpenseApprovedConsumer(
             cancellationToken: stoppingToken);
 
         var consumer = new AsyncEventingBasicConsumer(channel);
-        consumer.ReceivedAsync += (_, eventArgs) =>
+        consumer.ReceivedAsync += async (_, eventArgs) =>
         {
-            var integrationEvent = JsonSerializer.Deserialize<ExpenseApprovedIntegrationEvent>(
-                eventArgs.Body.Span);
-
-            if (integrationEvent is not null)
+            try
             {
+                var integrationEvent = JsonSerializer.Deserialize<ExpenseApprovedIntegrationEvent>(
+                    eventArgs.Body.Span);
+
+                if (integrationEvent is null
+                    || !ExpenseApprovedIntegrationEventValidator.IsValid(integrationEvent))
+                {
+                    logger.LogWarning(
+                        "RabbitMQ message {MessageId} contains an invalid expense approval event",
+                        eventArgs.BasicProperties.MessageId);
+                    await channel.BasicNackAsync(
+                        eventArgs.DeliveryTag,
+                        multiple: false,
+                        requeue: false,
+                        stoppingToken);
+                    return;
+                }
+
                 logger.LogInformation(
                     "Integration event {EventId} for expense request {ExpenseRequestId} " +
                     "and budget {BudgetId} was consumed",
                     integrationEvent.EventId,
                     integrationEvent.ExpenseRequestId,
                     integrationEvent.BudgetId);
-            }
 
-            return Task.CompletedTask;
+                await channel.BasicAckAsync(
+                    eventArgs.DeliveryTag,
+                    multiple: false,
+                    stoppingToken);
+            }
+            catch (JsonException exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "RabbitMQ message {MessageId} is not valid JSON",
+                    eventArgs.BasicProperties.MessageId);
+                await channel.BasicNackAsync(
+                    eventArgs.DeliveryTag,
+                    multiple: false,
+                    requeue: false,
+                    stoppingToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogError(
+                    exception,
+                    "Failed to process RabbitMQ message {MessageId}; returning it to the queue",
+                    eventArgs.BasicProperties.MessageId);
+                await channel.BasicNackAsync(
+                    eventArgs.DeliveryTag,
+                    multiple: false,
+                    requeue: true,
+                    stoppingToken);
+            }
         };
 
         await channel.BasicConsumeAsync(
             RabbitMqTopology.Queue,
-            autoAck: true,
+            autoAck: false,
             consumer,
             stoppingToken);
 
