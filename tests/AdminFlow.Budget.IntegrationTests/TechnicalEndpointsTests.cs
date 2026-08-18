@@ -44,4 +44,5 @@ public sealed class TechnicalEndpointsTests : IClassFixture<WebApplicationFactor
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
+
 }

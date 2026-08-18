@@ -3,6 +3,7 @@ using AdminFlow.Budget.Domain.CostCenters;
 using AdminFlow.Budget.Domain.ExpenseRequests;
 using AdminFlow.Budget.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using BudgetEntity = AdminFlow.Budget.Domain.Budgets.Budget;
 
 namespace AdminFlow.Budget.IntegrationTests.Persistence;
@@ -26,7 +27,8 @@ public sealed class ExpenseApprovalPersistenceTests : IAsyncLifetime
         {
             var service = new ExpenseApprovalService(
                 context,
-                new FixedTimeProvider(DecisionTime));
+                new FixedTimeProvider(DecisionTime),
+                NullLogger<ExpenseApprovalService>.Instance);
 
             await service.ApproveAsync(request.Id, decisionMakerId);
         }
@@ -52,7 +54,8 @@ public sealed class ExpenseApprovalPersistenceTests : IAsyncLifetime
         {
             var service = new ExpenseApprovalService(
                 context,
-                new FixedTimeProvider(DecisionTime));
+                new FixedTimeProvider(DecisionTime),
+                NullLogger<ExpenseApprovalService>.Instance);
 
             await service.RejectAsync(request.Id, Guid.NewGuid(), "Sem prioridade");
         }

@@ -1,5 +1,6 @@
 using AdminFlow.Budget.Application.Approvals;
 using AdminFlow.Budget.Domain.ExpenseRequests;
+using Microsoft.Extensions.Logging;
 using BudgetEntity = AdminFlow.Budget.Domain.Budgets.Budget;
 
 namespace AdminFlow.Budget.UnitTests.Application;
@@ -26,6 +27,31 @@ public sealed class ExpenseApprovalServiceTests
     }
 
     [Fact]
+    public async Task Approve_WhenSuccessful_ShouldWriteStructuredBusinessLog()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+        var request = CreateRequest(budget.Id, 400m);
+        var decisionMakerId = Guid.NewGuid();
+        var store = new FakeExpenseApprovalStore(request, budget);
+        var logger = new CollectingLogger<ExpenseApprovalService>();
+        var service = CreateService(store, logger);
+
+        await service.ApproveAsync(request.Id, decisionMakerId);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(LogLevel.Information, entry.Level);
+        Assert.Equal("ExpenseRequestApproved", entry.EventId.Name);
+        Assert.Equal(request.Id, entry.Properties["ExpenseRequestId"]);
+        Assert.Equal(budget.Id, entry.Properties["BudgetId"]);
+        Assert.Equal(decisionMakerId, entry.Properties["DecisionMakerId"]);
+        Assert.Equal(400m, entry.Properties["Amount"]);
+        Assert.Equal("Approved", entry.Properties["Action"]);
+        Assert.Equal(CurrentTime, entry.Properties["OccurredAt"]);
+        Assert.DoesNotContain("Description", entry.Properties.Keys);
+        Assert.DoesNotContain("RejectionReason", entry.Properties.Keys);
+    }
+
+    [Fact]
     public async Task Approve_WhenBalanceIsInsufficient_ShouldNotChangeOrSaveEntities()
     {
         var budget = new BudgetEntity(Guid.NewGuid(), 2026, 100m);
@@ -39,6 +65,36 @@ public sealed class ExpenseApprovalServiceTests
         Assert.Equal(ExpenseRequestStatus.Pending, request.Status);
         Assert.Equal(0m, budget.Committed);
         Assert.Equal(0, store.SaveCalls);
+    }
+
+    [Fact]
+    public async Task Approve_WhenBalanceIsInsufficient_ShouldNotWriteSuccessLog()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 100m);
+        var request = CreateRequest(budget.Id, 100.01m);
+        var store = new FakeExpenseApprovalStore(request, budget);
+        var logger = new CollectingLogger<ExpenseApprovalService>();
+        var service = CreateService(store, logger);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.ApproveAsync(request.Id, Guid.NewGuid()));
+
+        Assert.Empty(logger.Entries);
+    }
+
+    [Fact]
+    public async Task Approve_WhenPersistenceFails_ShouldNotWriteSuccessLog()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+        var request = CreateRequest(budget.Id, 400m);
+        var store = new FakeExpenseApprovalStore(request, budget, shouldFailOnSave: true);
+        var logger = new CollectingLogger<ExpenseApprovalService>();
+        var service = CreateService(store, logger);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.ApproveAsync(request.Id, Guid.NewGuid()));
+
+        Assert.Empty(logger.Entries);
     }
 
     [Fact]
@@ -67,9 +123,37 @@ public sealed class ExpenseApprovalServiceTests
         Assert.Equal(1, store.SaveCalls);
     }
 
-    private static ExpenseApprovalService CreateService(FakeExpenseApprovalStore store)
+    [Fact]
+    public async Task Reject_WhenSuccessful_ShouldWriteStructuredBusinessLogWithoutReason()
     {
-        return new ExpenseApprovalService(store, new FixedTimeProvider(CurrentTime));
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+        var request = CreateRequest(budget.Id, 400m);
+        var decisionMakerId = Guid.NewGuid();
+        var store = new FakeExpenseApprovalStore(request, budget);
+        var logger = new CollectingLogger<ExpenseApprovalService>();
+        var service = CreateService(store, logger);
+
+        await service.RejectAsync(request.Id, decisionMakerId, "Informação reservada");
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal("ExpenseRequestRejected", entry.EventId.Name);
+        Assert.Equal(request.Id, entry.Properties["ExpenseRequestId"]);
+        Assert.Equal(budget.Id, entry.Properties["BudgetId"]);
+        Assert.Equal(decisionMakerId, entry.Properties["DecisionMakerId"]);
+        Assert.Equal(400m, entry.Properties["Amount"]);
+        Assert.Equal("Rejected", entry.Properties["Action"]);
+        Assert.DoesNotContain("RejectionReason", entry.Properties.Keys);
+        Assert.DoesNotContain("Informação reservada", entry.Message);
+    }
+
+    private static ExpenseApprovalService CreateService(
+        FakeExpenseApprovalStore store,
+        ILogger<ExpenseApprovalService>? logger = null)
+    {
+        return new ExpenseApprovalService(
+            store,
+            new FixedTimeProvider(CurrentTime),
+            logger ?? new CollectingLogger<ExpenseApprovalService>());
     }
 
     private static ExpenseRequest CreateRequest(Guid budgetId, decimal amount)
@@ -83,7 +167,8 @@ public sealed class ExpenseApprovalServiceTests
 
     private sealed class FakeExpenseApprovalStore(
         ExpenseRequest? request,
-        BudgetEntity? budget) : IExpenseApprovalStore
+        BudgetEntity? budget,
+        bool shouldFailOnSave = false) : IExpenseApprovalStore
     {
         public int SaveCalls { get; private set; }
 
@@ -104,6 +189,11 @@ public sealed class ExpenseApprovalServiceTests
 
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
         {
+            if (shouldFailOnSave)
+            {
+                throw new InvalidOperationException("Persistence failed.");
+            }
+
             SaveCalls++;
             return Task.FromResult(2);
         }
@@ -112,5 +202,41 @@ public sealed class ExpenseApprovalServiceTests
     private sealed class FixedTimeProvider(DateTimeOffset currentTime) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => currentTime;
+    }
+
+    private sealed record LogEntry(
+        LogLevel Level,
+        EventId EventId,
+        string Message,
+        IReadOnlyDictionary<string, object?> Properties);
+
+    private sealed class CollectingLogger<T> : ILogger<T>
+    {
+        public List<LogEntry> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            var properties = state is IEnumerable<KeyValuePair<string, object?>> values
+                ? values
+                    .Where(value => value.Key != "{OriginalFormat}")
+                    .ToDictionary(value => value.Key, value => value.Value)
+                : new Dictionary<string, object?>();
+
+            Entries.Add(new LogEntry(
+                logLevel,
+                eventId,
+                formatter(state, exception),
+                properties));
+        }
     }
 }

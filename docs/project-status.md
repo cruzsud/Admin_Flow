@@ -2,7 +2,7 @@
 
 ## Fase Atual
 
-Phase 6 — Fluxo de Aprovação
+Phase 7 — Logging Estruturado
 
 ## Status
 
@@ -10,128 +10,116 @@ COMPLETE
 
 ## Implementado
 
-- `Budget.Commit(amount)` com validação de valor e saldo disponível.
-- Aprovação de solicitação pendente por `ExpenseRequest.Approve`.
-- Rejeição de solicitação pendente por `ExpenseRequest.Reject`.
-- Estados terminais sem nova decisão.
-- Bloqueio de autoaprovação.
-- Registro de `DecisionMakerId`, `DecidedAt` e `RejectionReason`.
-- Rejeição com motivo obrigatório e normalizado.
-- `ExpenseApprovalService` na Application para orquestrar decisões.
-- `TimeProvider` para obter tempo de forma testável.
-- Contrato específico `IExpenseApprovalStore`.
-- `BudgetDbContext` como implementação direta do contrato.
-- Gravação atômica de solicitação e orçamento pelo `SaveChanges` do EF Core.
-- Concorrência otimista de `Budget` pela coluna interna `xmin` do PostgreSQL.
-- Constraint de coerência entre status e dados de decisão.
-- Migration `AddExpenseApproval`.
-- ADR-003 para a estratégia de concorrência.
+- Serilog configurado como provedor de logging da API.
+- Sink inicial de console com template legível e propriedades estruturadas.
+- Níveis configurados por ambiente em `appsettings`.
+- Um evento HTTP por requisição com método, caminho, status e duração.
+- `ILogger<ExpenseApprovalService>` na Application, sem dependência direta de Serilog.
+- Evento `ExpenseRequestApproved` após aprovação persistida.
+- Evento `ExpenseRequestRejected` após rejeição persistida.
+- Propriedades `ExpenseRequestId`, `BudgetId`, `DecisionMakerId`, `Amount`, `Action` e `OccurredAt`.
+- Eventos de sucesso emitidos somente após `SaveChanges`.
+- Testes que inspecionam propriedades estruturadas, não somente texto.
+- Testes contra falso sucesso quando validação ou persistência falha.
+- ADR-004 documentando tecnologia, limites e dados proibidos.
 
-Não foram criados endpoints HTTP, autenticação, logging ou eventos.
+Não foram adicionados arquivos de log, serviço externo, auditoria persistente, RabbitMQ ou OpenTelemetry.
 
 ## Arquitetura
 
 ```text
 Application
   ExpenseApprovalService
-          |
-          v
-  IExpenseApprovalStore
-          |
-          v
-Infrastructure
-  BudgetDbContext -> EF Core -> PostgreSQL
-          |
-          v
+       -> ILogger<T> (abstração .NET)
+
+API
+  Serilog (implementação)
+       -> Console
+  SerilogRequestLogging
+       -> evento HTTP resumido
+
 Domain
-  ExpenseRequest.Approve/Reject
-  Budget.Commit
+  sem logging
 ```
 
-Application coordena e Domain decide as regras. Infrastructure carrega e persiste. O `BudgetDbContext` já oferece comportamento de Repository e Unit of Work, portanto nenhum wrapper genérico foi criado.
+O Serilog permanece na borda da aplicação. A Application conhece somente a abstração de logging e o Domain continua sem dependências externas.
 
-## Domínio Atual
+## Eventos Estruturados
 
 ```text
-ExpenseRequest: Pending
-  ├── Approve
-  |     ├── decisor válido e diferente do solicitante
-  |     ├── saldo suficiente
-  |     ├── Budget.Commit(Amount)
-  |     └── Approved
-  └── Reject
-        ├── decisor e motivo válidos
-        ├── orçamento inalterado
-        └── Rejected
+ExpenseRequestApproved
+ExpenseRequestRejected
+  ExpenseRequestId
+  BudgetId
+  DecisionMakerId
+  Amount
+  Action
+  OccurredAt
 ```
 
-`Approved` e `Rejected` são estados terminais. `Available = Allocated - Committed` continua calculado, e apenas aprovação aumenta `Committed`.
+Descrição, motivo de rejeição, corpo HTTP, query string, headers, senha, token e connection string não são registrados.
 
 ## Testes
 
-O ciclo Red/Green/Refactor foi aplicado ao Domain e à Application.
-
-Comportamentos protegidos:
-
-- aprovação com saldo maior ou exatamente igual;
-- rejeição por saldo insuficiente sem modificar entidades;
-- autoaprovação proibida;
-- decisão repetida ou troca de estado terminal proibida;
-- decisor, instante e motivo validados;
-- rejeição sem compromisso orçamentário;
-- gravação conjunta de orçamento e solicitação;
-- conflito concorrente detectado e segunda aprovação revertida.
-
-Validação contra PostgreSQL 17 real:
-
-- 46 testes unitários/Application aprovados;
-- 15 testes de integração aprovados;
-- total: 61 aprovados, 0 falhas, 0 ignorados com banco configurado;
-- build: 0 erros e 0 avisos;
-- modelo EF Core sem mudanças pendentes.
-
-Sem `ADMINFLOW_TEST_DB_CONNECTION_STRING`, os 12 testes PostgreSQL são ignorados explicitamente e os 3 testes técnicos continuam executando.
+- Evento de aprovação contém propriedades estruturadas esperadas.
+- Evento de rejeição não contém o motivo reservado.
+- Saldo insuficiente não gera falso evento de sucesso.
+- Falha de persistência não gera falso evento de sucesso.
+- API continua iniciando com health check e Swagger.
+- 50 testes unitários/Application aprovados.
+- 15 testes de integração aprovados com PostgreSQL configurado.
+- total esperado com banco: 65 aprovados, 0 falhas, 0 ignorados.
 
 ## Segurança
 
-- Autoaprovação é impedida no Domain.
-- `RequesterId` e `DecisionMakerId` ainda são identificadores informados, não identidades autenticadas.
-- Nenhum secret foi adicionado ao repositório.
-- Constraints protegem dados mesmo contra gravações externas à aplicação.
-- Erros de concorrência ainda não são expostos por HTTP porque não existem endpoints.
+Escopo revisado: configuração do Serilog, templates de eventos de negócio, middleware HTTP, appsettings e dependências adicionadas.
+
+### Achados
+
+- Crítico: nenhum.
+- Importante: nenhum novo problema introduzido.
+- Melhoria adiada: definir retenção e acesso quando existir armazenamento centralizado.
+- Informativo: identificadores e valores financeiros não são secrets, mas continuam sendo dados administrativos e exigem acesso controlado aos logs.
+
+### Controles Positivos
+
+- Nenhum secret no repositório ou nos templates.
+- Nenhuma descrição ou justificativa de rejeição registrada.
+- Nenhum corpo, query string ou header HTTP registrado.
+- Application não depende diretamente do Serilog.
+- Eventos de sucesso só ocorrem após persistência.
 
 ## Decisões Importantes
 
-- A solicitação controla sua transição e o orçamento controla seu saldo.
-- Application coordena os dois conceitos e faz uma única gravação.
-- `IExpenseApprovalStore` é específico do caso de uso; não foi criado repository genérico.
-- `BudgetDbContext` implementa o contrato diretamente.
-- `xmin` é propriedade sombra do EF Core para não contaminar o Domain.
-- O conflito concorrente não é repetido automaticamente; a futura borda HTTP decidirá como comunicá-lo.
-- ADR-003 documenta a estratégia de concorrência otimista.
+- Serilog está na API; `ILogger<T>` está na Application.
+- Domain não registra logs.
+- Console é o único sink nesta fase.
+- Logging operacional não substitui auditoria de negócio.
+- Não foi criado enriquecimento automático com dados potencialmente sensíveis.
+- ADR-004 registra a decisão.
 
 ## Problemas Conhecidos
 
-- Ainda não há endpoints HTTP para operar o fluxo.
-- Não existe autenticação nem autorização por papel.
-- Identificadores de atores ainda são fornecidos pelo chamador.
-- Não há trilha completa de auditoria ou histórico de múltiplas decisões.
+- Ainda não há endpoints HTTP de negócio para acionar o fluxo externamente.
+- Logs existem apenas no console e não possuem retenção centralizada.
+- Não há identificador autenticado nem autorização por papel.
+- Não existe trilha durável de auditoria.
+- Conflitos e erros ainda não possuem tradução HTTP padronizada.
 - O health check ainda não verifica prontidão do PostgreSQL.
-- Erros ainda não possuem tradução padronizada para contratos HTTP.
 
 ## Trabalho Adiado
 
-- Endpoints e contratos HTTP de criação, consulta e decisão.
-- Autenticação, autorização e políticas por papel.
-- Auditoria completa.
-- Tratamento HTTP de concorrência.
-- Serilog, RabbitMQ, OpenTelemetry e AdminFlow.People.
-- Redis, que não possui requisito atual.
+- Auditoria persistente e política de retenção.
+- Armazenamento ou agregação centralizada de logs.
+- Correlation ID explícito além do contexto HTTP padrão.
+- Endpoints e contratos HTTP de negócio.
+- Autenticação e autorização.
+- RabbitMQ, confiabilidade de mensageria, OpenTelemetry e AdminFlow.People.
 
 ## Próxima Fase
 
-Phase 7 — Logging Estruturado
+Phase 8 — Fundamentos de RabbitMQ
 
-Introduzir Serilog para registrar operações relevantes com propriedades estruturadas, sem secrets. O checkpoint da fase deverá delimitar como o fluxo atual será acionado e observado, considerando que ainda não há endpoints de negócio.
+Introduzir um evento de integração para aprovação, um producer e um consumer simples. Antes disso, o checkpoint deverá resolver como o fluxo será acionado e como a publicação ocorrerá sem comprometer a transação já existente, sem antecipar retry, DLQ ou idempotência da Fase 9.
 
 Não iniciar sem autorização explícita.

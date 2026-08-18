@@ -1,11 +1,19 @@
 using AdminFlow.Budget.Domain.ExpenseRequests;
+using Microsoft.Extensions.Logging;
 
 namespace AdminFlow.Budget.Application.Approvals;
 
 public sealed class ExpenseApprovalService(
     IExpenseApprovalStore store,
-    TimeProvider timeProvider)
+    TimeProvider timeProvider,
+    ILogger<ExpenseApprovalService> logger)
 {
+    private static readonly EventId ExpenseRequestApproved =
+        new(1001, nameof(ExpenseRequestApproved));
+
+    private static readonly EventId ExpenseRequestRejected =
+        new(1002, nameof(ExpenseRequestRejected));
+
     public async Task ApproveAsync(
         Guid expenseRequestId,
         Guid decisionMakerId,
@@ -22,10 +30,22 @@ public sealed class ExpenseApprovalService(
                 "The budget does not have enough available balance.");
         }
 
-        request.Approve(decisionMakerId, timeProvider.GetUtcNow());
+        var occurredAt = timeProvider.GetUtcNow();
+        request.Approve(decisionMakerId, occurredAt);
         budget.Commit(request.Amount);
 
         await store.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            ExpenseRequestApproved,
+            "Expense request {ExpenseRequestId} for budget {BudgetId} was {Action} " +
+            "by {DecisionMakerId} for {Amount} at {OccurredAt}",
+            request.Id,
+            budget.Id,
+            "Approved",
+            decisionMakerId,
+            request.Amount,
+            occurredAt);
     }
 
     public async Task RejectAsync(
@@ -36,9 +56,21 @@ public sealed class ExpenseApprovalService(
     {
         var request = await FindRequestAsync(expenseRequestId, cancellationToken);
 
-        request.Reject(decisionMakerId, reason, timeProvider.GetUtcNow());
+        var occurredAt = timeProvider.GetUtcNow();
+        request.Reject(decisionMakerId, reason, occurredAt);
 
         await store.SaveChangesAsync(cancellationToken);
+
+        logger.LogInformation(
+            ExpenseRequestRejected,
+            "Expense request {ExpenseRequestId} for budget {BudgetId} was {Action} " +
+            "by {DecisionMakerId} for {Amount} at {OccurredAt}",
+            request.Id,
+            request.BudgetId,
+            "Rejected",
+            decisionMakerId,
+            request.Amount,
+            occurredAt);
     }
 
     private async Task<ExpenseRequest> FindRequestAsync(

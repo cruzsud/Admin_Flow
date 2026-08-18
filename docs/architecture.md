@@ -199,6 +199,27 @@ O próprio `BudgetDbContext` implementa o contrato específico; não existe repo
 
 O campo interno `xmin` do PostgreSQL é usado como token de concorrência otimista do orçamento. Ele não aparece na entidade de domínio nem é criado pela migration. Se outra operação alterar o orçamento desde sua leitura, o `UPDATE` não encontra a versão esperada e o EF Core lança `DbUpdateConcurrencyException`, revertendo a transação. A futura API deverá traduzir esse conflito para uma resposta apropriada, sem expor detalhes do banco.
 
+## Logging estruturado
+
+```text
+Domain
+  sem dependência de logging
+
+Application
+  ExpenseApprovalService -> ILogger<ExpenseApprovalService>
+                                  |
+                                  v
+API / composição
+  Serilog -> Console
+  SerilogRequestLogging -> eventos HTTP
+```
+
+A Application depende apenas de `Microsoft.Extensions.Logging.Abstractions`. O Serilog é configurado na API como implementação concreta e lê níveis e sink do `appsettings.json`. Isso preserva o Domain e evita acoplar casos de uso diretamente ao Serilog.
+
+Eventos de aprovação e rejeição são emitidos em `Information` somente depois de `SaveChanges`. Cada evento contém `ExpenseRequestId`, `BudgetId`, `DecisionMakerId`, `Amount`, `Action` e `OccurredAt` como propriedades separadas. Descrição, motivo de rejeição, credenciais, connection strings, tokens e cabeçalhos de autorização não são registrados.
+
+O middleware de requisição gera um evento por chamada HTTP com método, caminho, status e duração. Corpo, query string e headers não são enriquecidos nesta fase para reduzir risco de exposição. Persistência em arquivo ou serviço externo também foi adiada; o sink inicial é apenas o console.
+
 ## Roadmap revisado
 
 | Fase | Conteúdo | Observação |
