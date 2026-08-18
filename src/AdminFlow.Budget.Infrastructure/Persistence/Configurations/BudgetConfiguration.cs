@@ -53,6 +53,9 @@ internal sealed class BudgetConfiguration : IEntityTypeConfiguration<BudgetEntit
 
         builder.Ignore(budget => budget.Available);
 
+        builder.Property<uint>("xmin")
+            .IsRowVersion();
+
         builder.HasIndex(budget => new { budget.CostCenterId, budget.FiscalYear })
             .IsUnique()
             .HasDatabaseName("ux_budgets_cost_center_fiscal_year");

@@ -13,6 +13,14 @@ internal sealed class ExpenseRequestConfiguration : IEntityTypeConfiguration<Exp
         {
             table.HasCheckConstraint("ck_expense_requests_amount_positive", "amount > 0");
             table.HasCheckConstraint("ck_expense_requests_status_valid", "status IN (1, 2, 3)");
+            table.HasCheckConstraint(
+                "ck_expense_requests_decision_consistent",
+                "(status = 1 AND decision_maker_id IS NULL AND decided_at IS NULL " +
+                "AND rejection_reason IS NULL) OR " +
+                "(status = 2 AND decision_maker_id IS NOT NULL AND decided_at IS NOT NULL " +
+                "AND rejection_reason IS NULL) OR " +
+                "(status = 3 AND decision_maker_id IS NOT NULL AND decided_at IS NOT NULL " +
+                "AND rejection_reason IS NOT NULL AND btrim(rejection_reason) <> '')");
         });
 
         builder.HasKey(request => request.Id).HasName("pk_expense_requests");
@@ -43,6 +51,16 @@ internal sealed class ExpenseRequestConfiguration : IEntityTypeConfiguration<Exp
             .HasColumnName("status")
             .HasConversion<int>()
             .IsRequired();
+
+        builder.Property(request => request.DecisionMakerId)
+            .HasColumnName("decision_maker_id");
+
+        builder.Property(request => request.DecidedAt)
+            .HasColumnName("decided_at");
+
+        builder.Property(request => request.RejectionReason)
+            .HasColumnName("rejection_reason")
+            .HasColumnType("text");
 
         builder.HasIndex(request => request.BudgetId)
             .HasDatabaseName("ix_expense_requests_budget_id");

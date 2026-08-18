@@ -61,4 +61,49 @@ public sealed class BudgetTests
 
         Assert.Equal("allocated", exception.ParamName);
     }
+
+    [Fact]
+    public void Commit_WhenBalanceIsEnough_ShouldIncreaseCommittedAndDecreaseAvailable()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+
+        budget.Commit(400m);
+
+        Assert.Equal(400m, budget.Committed);
+        Assert.Equal(600m, budget.Available);
+    }
+
+    [Fact]
+    public void Commit_WhenAmountEqualsAvailable_ShouldUseEntireBalance()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+
+        budget.Commit(1_000m);
+
+        Assert.Equal(1_000m, budget.Committed);
+        Assert.Equal(0m, budget.Available);
+    }
+
+    [Fact]
+    public void Commit_WhenBalanceIsInsufficient_ShouldThrowInvalidOperationException()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => budget.Commit(1_000.01m));
+
+        Assert.Equal("The budget does not have enough available balance.", exception.Message);
+        Assert.Equal(0m, budget.Committed);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-0.01")]
+    public void Commit_WhenAmountIsNotPositive_ShouldThrowArgumentOutOfRangeException(
+        string invalidAmount)
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => budget.Commit(decimal.Parse(invalidAmount)));
+    }
 }

@@ -1,3 +1,4 @@
+using AdminFlow.Budget.Application.Approvals;
 using AdminFlow.Budget.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,10 @@ public static class DependencyInjection
 
         services.AddDbContext<BudgetDbContext>(options =>
             options.UseNpgsql(connectionString));
+        services.AddScoped<IExpenseApprovalStore>(services =>
+            services.GetRequiredService<BudgetDbContext>());
+        services.AddScoped<ExpenseApprovalService>();
+        services.AddSingleton(TimeProvider.System);
 
         return services;
     }

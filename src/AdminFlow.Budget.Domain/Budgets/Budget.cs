@@ -48,4 +48,29 @@ public sealed class Budget
     public decimal Committed { get; private set; }
 
     public decimal Available => Allocated - Committed;
+
+    public void Commit(decimal amount)
+    {
+        if (amount <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(amount),
+                "Committed amount must be greater than zero.");
+        }
+
+        if (decimal.Round(amount, 2) != amount)
+        {
+            throw new ArgumentException(
+                "Committed amount cannot have more than two decimal places.",
+                nameof(amount));
+        }
+
+        if (amount > Available)
+        {
+            throw new InvalidOperationException(
+                "The budget does not have enough available balance.");
+        }
+
+        Committed += amount;
+    }
 }

@@ -161,7 +161,7 @@ API -> Application -> Domain -> Infrastructure -> PostgreSQL
 5. **PostgreSQL:** aplica constraints e confirma atomicamente a alteração.
 6. **API:** devolve `200`, ou mapeia ausência para `404`, validação para `400` e conflito de estado/saldo/concorrência para `409`.
 
-PostgreSQL e a persistência de `CostCenter`, `Budget` e `ExpenseRequest` já existem. O fluxo transacional de aprovação mostrado acima continua apenas planejado: ainda não há transições de aprovação/rejeição nem alteração de saldo.
+PostgreSQL e a persistência de `CostCenter`, `Budget` e `ExpenseRequest` já existem. Na Fase 6, o fluxo de aprovação passou a ser implementado por `ExpenseApprovalService`, que carrega as entidades por `IExpenseApprovalStore`, executa o comportamento do Domain e grava as alterações em uma única chamada.
 
 ## Persistência de ExpenseRequest
 
@@ -176,6 +176,28 @@ PostgreSQL: expense_requests -> budgets
 ```
 
 `BudgetDbContext` expõe `ExpenseRequests` para inclusão e consulta. O mapeamento mantém a entidade de domínio independente do EF Core, persiste o status como inteiro, cria índice por `budget_id` e impede no banco solicitações associadas a orçamento inexistente. Casos de uso e endpoints continuam adiados; não foi criada uma abstração de repository porque o `DbContext` já atende à persistência desta fase.
+
+## Aprovação, atomicidade e concorrência
+
+```text
+ExpenseApprovalService (Application)
+       |
+       v
+IExpenseApprovalStore (contrato)
+       |
+       v
+BudgetDbContext (Infrastructure)
+       |
+       +-- ExpenseRequest.Approve/Reject
+       +-- Budget.Commit
+       |
+       v
+SaveChanges -> transação PostgreSQL
+```
+
+O próprio `BudgetDbContext` implementa o contrato específico; não existe repository genérico nem wrapper genérico de Unit of Work. O EF Core envolve as atualizações de uma aprovação em transação, garantindo que solicitação e orçamento sejam confirmados ou revertidos juntos.
+
+O campo interno `xmin` do PostgreSQL é usado como token de concorrência otimista do orçamento. Ele não aparece na entidade de domínio nem é criado pela migration. Se outra operação alterar o orçamento desde sua leitura, o `UPDATE` não encontra a versão esperada e o EF Core lança `DbUpdateConcurrencyException`, revertendo a transação. A futura API deverá traduzir esse conflito para uma resposta apropriada, sem expor detalhes do banco.
 
 ## Roadmap revisado
 

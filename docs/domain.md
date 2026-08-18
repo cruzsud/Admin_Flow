@@ -149,7 +149,9 @@ ExpenseRequest
   Status = Pending
 ```
 
-A criação valida referências não vazias, descrição obrigatória e normalizada, valor positivo com no máximo duas casas decimais e estado inicial `Pending`. Os estados `Approved` e `Rejected` já fazem parte da linguagem do domínio, mas suas transições e dados de decisão só serão implementados na Fase 6.
+A criação valida referências não vazias, descrição obrigatória e normalizada, valor positivo com no máximo duas casas decimais e estado inicial `Pending`.
+
+Na Fase 6, `Approve` e `Reject` passaram a controlar as transições. Ambas registram decisor e instante. Aprovação impede autoaprovação e compromete o valor no orçamento; rejeição exige motivo e não altera saldo. `Approved` e `Rejected` são terminais.
 
 ### Conceitos adiados
 
@@ -173,6 +175,8 @@ Available = Allocated - Committed
 ```
 
 A criação de uma solicitação pendente não altera saldo. A aprovação exige `Available >= ExpenseRequest.Amount` e, na mesma operação lógica, aumenta `Committed` e muda a solicitação para `Approved`.
+
+O comportamento `Budget.Commit(amount)` protege `Committed <= Allocated`. A Application verifica o saldo antes de alterar as entidades e persiste solicitação e orçamento em uma única chamada. A constraint do banco reforça a coerência entre estado e dados de decisão.
 
 Consequências:
 
