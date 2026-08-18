@@ -1,4 +1,5 @@
 using AdminFlow.Budget.Domain.ExpenseRequests;
+using AdminFlow.Budget.Application.IntegrationEvents;
 using Microsoft.Extensions.Logging;
 
 namespace AdminFlow.Budget.Application.Approvals;
@@ -6,7 +7,8 @@ namespace AdminFlow.Budget.Application.Approvals;
 public sealed class ExpenseApprovalService(
     IExpenseApprovalStore store,
     TimeProvider timeProvider,
-    ILogger<ExpenseApprovalService> logger)
+    ILogger<ExpenseApprovalService> logger,
+    IExpenseApprovedPublisher publisher)
 {
     private static readonly EventId ExpenseRequestApproved =
         new(1001, nameof(ExpenseRequestApproved));
@@ -35,6 +37,17 @@ public sealed class ExpenseApprovalService(
         budget.Commit(request.Amount);
 
         await store.SaveChangesAsync(cancellationToken);
+
+        await publisher.PublishAsync(
+            new ExpenseApprovedIntegrationEvent(
+                Guid.NewGuid(),
+                request.Id,
+                budget.Id,
+                decisionMakerId,
+                request.Amount,
+                "BRL",
+                occurredAt),
+            cancellationToken);
 
         logger.LogInformation(
             ExpenseRequestApproved,

@@ -1,4 +1,6 @@
 using AdminFlow.Budget.Application.Approvals;
+using AdminFlow.Budget.Application.IntegrationEvents;
+using AdminFlow.Budget.Infrastructure.Messaging;
 using AdminFlow.Budget.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,7 +11,8 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(
         this IServiceCollection services,
-        string connectionString)
+        string connectionString,
+        RabbitMqOptions rabbitMqOptions)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
@@ -19,6 +22,19 @@ public static class DependencyInjection
             services.GetRequiredService<BudgetDbContext>());
         services.AddScoped<ExpenseApprovalService>();
         services.AddSingleton(TimeProvider.System);
+
+        if (rabbitMqOptions.Enabled)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(rabbitMqOptions.UserName);
+            ArgumentException.ThrowIfNullOrWhiteSpace(rabbitMqOptions.Password);
+            services.AddSingleton(rabbitMqOptions);
+            services.AddSingleton<IExpenseApprovedPublisher, RabbitMqExpenseApprovedPublisher>();
+            services.AddHostedService<ExpenseApprovedConsumer>();
+        }
+        else
+        {
+            services.AddSingleton<IExpenseApprovedPublisher, DisabledExpenseApprovedPublisher>();
+        }
 
         return services;
     }

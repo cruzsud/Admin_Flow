@@ -2,7 +2,7 @@
 
 ## Fase Atual
 
-Phase 7 — Logging Estruturado
+Phase 8 — Fundamentos de RabbitMQ
 
 ## Status
 
@@ -10,116 +10,103 @@ COMPLETE
 
 ## Implementado
 
-- Serilog configurado como provedor de logging da API.
-- Sink inicial de console com template legível e propriedades estruturadas.
-- Níveis configurados por ambiente em `appsettings`.
-- Um evento HTTP por requisição com método, caminho, status e duração.
-- `ILogger<ExpenseApprovalService>` na Application, sem dependência direta de Serilog.
-- Evento `ExpenseRequestApproved` após aprovação persistida.
-- Evento `ExpenseRequestRejected` após rejeição persistida.
-- Propriedades `ExpenseRequestId`, `BudgetId`, `DecisionMakerId`, `Amount`, `Action` e `OccurredAt`.
-- Eventos de sucesso emitidos somente após `SaveChanges`.
-- Testes que inspecionam propriedades estruturadas, não somente texto.
-- Testes contra falso sucesso quando validação ou persistência falha.
-- ADR-004 documentando tecnologia, limites e dados proibidos.
-
-Não foram adicionados arquivos de log, serviço externo, auditoria persistente, RabbitMQ ou OpenTelemetry.
+- Contrato `ExpenseApprovedIntegrationEvent` na Application.
+- Abstração `IExpenseApprovedPublisher` independente do RabbitMQ.
+- Publicação somente após aprovação persistida.
+- Rejeições não publicam evento de aprovação.
+- Producer com RabbitMQ.Client 7.2.2.
+- Exchange direto durável `adminflow.budget`.
+- Routing key `expense.approved`.
+- Fila durável `adminflow.budget.expense-approved`.
+- Mensagem JSON persistente com `EventId` como `MessageId`.
+- Consumer simples como `BackgroundService`.
+- Consumer desserializa e registra recebimento estruturado.
+- RabbitMQ 4.1 Management no Docker Compose.
+- Integração habilitável por configuração.
+- Credenciais exclusivamente por ambiente.
+- Teste real de publicação e desserialização.
+- ADR-005 documentando escolhas e limitações.
 
 ## Arquitetura
 
 ```text
 Application
   ExpenseApprovalService
-       -> ILogger<T> (abstração .NET)
+    -> IExpenseApprovedPublisher
+    -> ExpenseApprovedIntegrationEvent
 
-API
-  Serilog (implementação)
-       -> Console
-  SerilogRequestLogging
-       -> evento HTTP resumido
+Infrastructure
+  RabbitMqExpenseApprovedPublisher
+  ExpenseApprovedConsumer
+    -> RabbitMQ
 
 Domain
-  sem logging
+  sem dependência de mensageria
 ```
 
-O Serilog permanece na borda da aplicação. A Application conhece somente a abstração de logging e o Domain continua sem dependências externas.
+## Evento
 
-## Eventos Estruturados
+`ExpenseApprovedIntegrationEvent` contém:
 
-```text
-ExpenseRequestApproved
-ExpenseRequestRejected
-  ExpenseRequestId
-  BudgetId
-  DecisionMakerId
-  Amount
-  Action
-  OccurredAt
-```
+- `EventId`;
+- `ExpenseRequestId`;
+- `BudgetId`;
+- `DecisionMakerId`;
+- `Amount`;
+- `Currency = BRL`;
+- `ApprovedAt`.
 
-Descrição, motivo de rejeição, corpo HTTP, query string, headers, senha, token e connection string não são registrados.
+Descrição e motivo de rejeição não são publicados.
 
 ## Testes
 
-- Evento de aprovação contém propriedades estruturadas esperadas.
-- Evento de rejeição não contém o motivo reservado.
-- Saldo insuficiente não gera falso evento de sucesso.
-- Falha de persistência não gera falso evento de sucesso.
-- API continua iniciando com health check e Swagger.
-- 50 testes unitários/Application aprovados.
-- 15 testes de integração aprovados com PostgreSQL configurado.
-- total esperado com banco: 65 aprovados, 0 falhas, 0 ignorados.
+- aprovação persistida publica exatamente um evento;
+- falha de persistência não publica;
+- rejeição não publica;
+- contrato contém os valores esperados;
+- producer entrega JSON válido em RabbitMQ real;
+- 53 testes unitários/Application aprovados;
+- 16 testes de integração esperados com PostgreSQL e RabbitMQ;
+- total esperado: 69 aprovados, 0 falhas, 0 ignorados.
 
 ## Segurança
 
-Escopo revisado: configuração do Serilog, templates de eventos de negócio, middleware HTTP, appsettings e dependências adicionadas.
-
-### Achados
-
-- Crítico: nenhum.
-- Importante: nenhum novo problema introduzido.
-- Melhoria adiada: definir retenção e acesso quando existir armazenamento centralizado.
-- Informativo: identificadores e valores financeiros não são secrets, mas continuam sendo dados administrativos e exigem acesso controlado aos logs.
-
-### Controles Positivos
-
-- Nenhum secret no repositório ou nos templates.
-- Nenhuma descrição ou justificativa de rejeição registrada.
-- Nenhum corpo, query string ou header HTTP registrado.
-- Application não depende diretamente do Serilog.
-- Eventos de sucesso só ocorrem após persistência.
+- Nenhuma credencial RabbitMQ foi versionada.
+- Senha é recebida por `RabbitMq:Password`/variável de ambiente.
+- Configuração habilitada exige usuário e senha não vazios.
+- Evento não contém secrets, descrição ou motivo de rejeição.
+- Pacote RabbitMQ.Client foi consultado no catálogo de vulnerabilidades do NuGet sem alerta reportado.
 
 ## Decisões Importantes
 
-- Serilog está na API; `ILogger<T>` está na Application.
-- Domain não registra logs.
-- Console é o único sink nesta fase.
-- Logging operacional não substitui auditoria de negócio.
-- Não foi criado enriquecimento automático com dados potencialmente sensíveis.
-- ADR-004 registra a decisão.
+- O evento é de integração, não entidade nem mensagem criada pelo Domain.
+- Publicação ocorre depois do commit do PostgreSQL.
+- RabbitMQ pode permanecer desabilitado para execução sem broker.
+- Producer e consumer ficam na Infrastructure.
+- Consumidor inicial apenas registra o fato recebido.
+- ADR-005 registra a fundação e os riscos aceitos.
 
 ## Problemas Conhecidos
 
-- Ainda não há endpoints HTTP de negócio para acionar o fluxo externamente.
-- Logs existem apenas no console e não possuem retenção centralizada.
-- Não há identificador autenticado nem autorização por papel.
-- Não existe trilha durável de auditoria.
-- Conflitos e erros ainda não possuem tradução HTTP padronizada.
-- O health check ainda não verifica prontidão do PostgreSQL.
+- Existe janela de falha entre commit do PostgreSQL e publicação.
+- Consumer usa `autoAck=true`.
+- Não há retry, DLQ, idempotência ou publisher confirms.
+- Producer abre conexão/canal por publicação; otimização foi adiada.
+- Ainda não há endpoint HTTP de negócio para acionar o fluxo.
+- RabbitMQ desabilitado usa publisher sem operação para manter desenvolvimento local simples.
 
 ## Trabalho Adiado
 
-- Auditoria persistente e política de retenção.
-- Armazenamento ou agregação centralizada de logs.
-- Correlation ID explícito além do contexto HTTP padrão.
-- Endpoints e contratos HTTP de negócio.
-- Autenticação e autorização.
-- RabbitMQ, confiabilidade de mensageria, OpenTelemetry e AdminFlow.People.
+- Acknowledgement manual, retry, dead-letter queue e idempotência.
+- Avaliação de Outbox transacional.
+- Reconexão e reutilização eficiente de conexões/canais.
+- Endpoints HTTP, autenticação e autorização.
+- OpenTelemetry e AdminFlow.People.
 
 ## Próxima Fase
 
-Phase 8 — Fundamentos de RabbitMQ
+Phase 9 — Confiabilidade do RabbitMQ
 
-Introduzir um evento de integração para aprovação, um producer e um consumer simples. Antes disso, o checkpoint deverá resolver como o fluxo será acionado e como a publicação ocorrerá sem comprometer a transação já existente, sem antecipar retry, DLQ ou idempotência da Fase 9.
+Introduzir progressivamente acknowledgement, tratamento de falhas, retry, dead-letter queue e idempotência, avaliando também a lacuna entre banco e publicação. Não implementar tudo sem novo checkpoint e delimitação didática.
 
 Não iniciar sem autorização explícita.

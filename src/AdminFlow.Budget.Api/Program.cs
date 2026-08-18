@@ -1,4 +1,5 @@
 using AdminFlow.Budget.Infrastructure;
+using AdminFlow.Budget.Infrastructure.Messaging;
 using Microsoft.OpenApi;
 using Serilog;
 
@@ -13,7 +14,17 @@ var connectionString = builder.Configuration.GetConnectionString("BudgetDatabase
     ?? throw new InvalidOperationException(
         "Connection string 'BudgetDatabase' is not configured.");
 
-builder.Services.AddInfrastructure(connectionString);
+var rabbitMqOptions = new RabbitMqOptions
+{
+    Enabled = builder.Configuration.GetValue<bool>("RabbitMq:Enabled"),
+    HostName = builder.Configuration["RabbitMq:HostName"] ?? "localhost",
+    Port = builder.Configuration.GetValue("RabbitMq:Port", 5672),
+    UserName = builder.Configuration["RabbitMq:UserName"] ?? string.Empty,
+    Password = builder.Configuration["RabbitMq:Password"] ?? string.Empty,
+    VirtualHost = builder.Configuration["RabbitMq:VirtualHost"] ?? "/"
+};
+
+builder.Services.AddInfrastructure(connectionString, rabbitMqOptions);
 builder.Services.AddHealthChecks();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>

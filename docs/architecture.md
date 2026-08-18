@@ -252,6 +252,27 @@ aprovação confirmada no PostgreSQL
   -> consumer inicial de auditoria/processamento
 ```
 
+## Fundamentos de RabbitMQ implementados
+
+```text
+ExpenseApprovalService
+  -> SaveChanges (PostgreSQL)
+  -> ExpenseApprovedIntegrationEvent
+  -> IExpenseApprovedPublisher
+  -> RabbitMqExpenseApprovedPublisher
+  -> exchange adminflow.budget
+  -> routing key expense.approved
+  -> queue adminflow.budget.expense-approved
+  -> ExpenseApprovedConsumer
+  -> log estruturado
+```
+
+O contrato do evento e a interface de publicação ficam na Application. O cliente RabbitMQ, produtor, topologia e consumidor hospedado ficam na Infrastructure. O Domain não conhece mensageria. A API habilita a integração apenas quando `RabbitMq:Enabled=true` e atua como composition root.
+
+O evento contém `EventId`, `ExpenseRequestId`, `BudgetId`, `DecisionMakerId`, `Amount`, `Currency` e `ApprovedAt`. Ele representa um fato já confirmado; rejeições não publicam evento de aprovação. A fila e o exchange são duráveis e as mensagens são marcadas como persistentes, mas confirmações do broker ainda não foram implementadas.
+
+Nesta fase, a publicação acontece depois do commit do PostgreSQL. Isso impede publicar uma aprovação não persistida, mas deixa uma janela de falha entre banco e broker. O consumidor usa `autoAck=true`. Retry, acknowledgement manual, DLQ, idempotência e uma possível estratégia Outbox ficam deliberadamente para a Fase 9.
+
 O evento comunica um fato já confirmado; o consumidor não participa da decisão síncrona de aprovação. Antes de implementar será necessário decidir como evitar a perda entre commit no banco e publicação (por exemplo, avaliar outbox), mas essa decisão não será antecipada na Fase 0. RabbitMQ não exige um microserviço publicador separado.
 
 Redis não resolve nenhum problema atual e permanece fora do escopo.

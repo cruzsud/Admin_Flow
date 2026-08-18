@@ -1,4 +1,5 @@
 using AdminFlow.Budget.Application.Approvals;
+using AdminFlow.Budget.Application.IntegrationEvents;
 using AdminFlow.Budget.Domain.ExpenseRequests;
 using Microsoft.Extensions.Logging;
 using BudgetEntity = AdminFlow.Budget.Domain.Budgets.Budget;
@@ -24,6 +25,28 @@ public sealed class ExpenseApprovalServiceTests
         Assert.Equal(400m, budget.Committed);
         Assert.Equal(600m, budget.Available);
         Assert.Equal(1, store.SaveCalls);
+    }
+
+    [Fact]
+    public async Task Approve_WhenPersistenceSucceeds_ShouldPublishIntegrationEvent()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+        var request = CreateRequest(budget.Id, 400m);
+        var decisionMakerId = Guid.NewGuid();
+        var store = new FakeExpenseApprovalStore(request, budget);
+        var publisher = new FakeExpenseApprovedPublisher();
+        var service = CreateService(store, publisher: publisher);
+
+        await service.ApproveAsync(request.Id, decisionMakerId);
+
+        var integrationEvent = Assert.Single(publisher.PublishedEvents);
+        Assert.NotEqual(Guid.Empty, integrationEvent.EventId);
+        Assert.Equal(request.Id, integrationEvent.ExpenseRequestId);
+        Assert.Equal(budget.Id, integrationEvent.BudgetId);
+        Assert.Equal(decisionMakerId, integrationEvent.DecisionMakerId);
+        Assert.Equal(400m, integrationEvent.Amount);
+        Assert.Equal("BRL", integrationEvent.Currency);
+        Assert.Equal(CurrentTime, integrationEvent.ApprovedAt);
     }
 
     [Fact]
@@ -98,6 +121,21 @@ public sealed class ExpenseApprovalServiceTests
     }
 
     [Fact]
+    public async Task Approve_WhenPersistenceFails_ShouldNotPublishIntegrationEvent()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+        var request = CreateRequest(budget.Id, 400m);
+        var store = new FakeExpenseApprovalStore(request, budget, shouldFailOnSave: true);
+        var publisher = new FakeExpenseApprovedPublisher();
+        var service = CreateService(store, publisher: publisher);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.ApproveAsync(request.Id, Guid.NewGuid()));
+
+        Assert.Empty(publisher.PublishedEvents);
+    }
+
+    [Fact]
     public async Task Approve_WhenRequestDoesNotExist_ShouldThrowKeyNotFoundException()
     {
         var store = new FakeExpenseApprovalStore(null, null);
@@ -146,14 +184,30 @@ public sealed class ExpenseApprovalServiceTests
         Assert.DoesNotContain("Informação reservada", entry.Message);
     }
 
+    [Fact]
+    public async Task Reject_WhenSuccessful_ShouldNotPublishApprovalEvent()
+    {
+        var budget = new BudgetEntity(Guid.NewGuid(), 2026, 1_000m);
+        var request = CreateRequest(budget.Id, 400m);
+        var store = new FakeExpenseApprovalStore(request, budget);
+        var publisher = new FakeExpenseApprovedPublisher();
+        var service = CreateService(store, publisher: publisher);
+
+        await service.RejectAsync(request.Id, Guid.NewGuid(), "Sem prioridade");
+
+        Assert.Empty(publisher.PublishedEvents);
+    }
+
     private static ExpenseApprovalService CreateService(
         FakeExpenseApprovalStore store,
-        ILogger<ExpenseApprovalService>? logger = null)
+        ILogger<ExpenseApprovalService>? logger = null,
+        IExpenseApprovedPublisher? publisher = null)
     {
         return new ExpenseApprovalService(
             store,
             new FixedTimeProvider(CurrentTime),
-            logger ?? new CollectingLogger<ExpenseApprovalService>());
+            logger ?? new CollectingLogger<ExpenseApprovalService>(),
+            publisher ?? new FakeExpenseApprovedPublisher());
     }
 
     private static ExpenseRequest CreateRequest(Guid budgetId, decimal amount)
@@ -202,6 +256,19 @@ public sealed class ExpenseApprovalServiceTests
     private sealed class FixedTimeProvider(DateTimeOffset currentTime) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => currentTime;
+    }
+
+    private sealed class FakeExpenseApprovedPublisher : IExpenseApprovedPublisher
+    {
+        public List<ExpenseApprovedIntegrationEvent> PublishedEvents { get; } = [];
+
+        public Task PublishAsync(
+            ExpenseApprovedIntegrationEvent integrationEvent,
+            CancellationToken cancellationToken = default)
+        {
+            PublishedEvents.Add(integrationEvent);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed record LogEntry(

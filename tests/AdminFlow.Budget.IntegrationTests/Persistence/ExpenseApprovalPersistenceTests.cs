@@ -1,4 +1,5 @@
 using AdminFlow.Budget.Application.Approvals;
+using AdminFlow.Budget.Application.IntegrationEvents;
 using AdminFlow.Budget.Domain.CostCenters;
 using AdminFlow.Budget.Domain.ExpenseRequests;
 using AdminFlow.Budget.Infrastructure.Persistence;
@@ -28,7 +29,8 @@ public sealed class ExpenseApprovalPersistenceTests : IAsyncLifetime
             var service = new ExpenseApprovalService(
                 context,
                 new FixedTimeProvider(DecisionTime),
-                NullLogger<ExpenseApprovalService>.Instance);
+                NullLogger<ExpenseApprovalService>.Instance,
+                NullExpenseApprovedPublisher.Instance);
 
             await service.ApproveAsync(request.Id, decisionMakerId);
         }
@@ -55,7 +57,8 @@ public sealed class ExpenseApprovalPersistenceTests : IAsyncLifetime
             var service = new ExpenseApprovalService(
                 context,
                 new FixedTimeProvider(DecisionTime),
-                NullLogger<ExpenseApprovalService>.Instance);
+                NullLogger<ExpenseApprovalService>.Instance,
+                NullExpenseApprovedPublisher.Instance);
 
             await service.RejectAsync(request.Id, Guid.NewGuid(), "Sem prioridade");
         }
@@ -173,5 +176,14 @@ public sealed class ExpenseApprovalPersistenceTests : IAsyncLifetime
     private sealed class FixedTimeProvider(DateTimeOffset currentTime) : TimeProvider
     {
         public override DateTimeOffset GetUtcNow() => currentTime;
+    }
+
+    private sealed class NullExpenseApprovedPublisher : IExpenseApprovedPublisher
+    {
+        public static NullExpenseApprovedPublisher Instance { get; } = new();
+
+        public Task PublishAsync(
+            ExpenseApprovedIntegrationEvent integrationEvent,
+            CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }
