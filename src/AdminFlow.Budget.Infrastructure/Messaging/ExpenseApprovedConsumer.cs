@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AdminFlow.Budget.Application.IntegrationEvents;
+using AdminFlow.Budget.Infrastructure.Observability;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
@@ -92,6 +93,10 @@ internal sealed class ExpenseApprovedConsumer(
         var consumer = new AsyncEventingBasicConsumer(channel);
         consumer.ReceivedAsync += async (_, eventArgs) =>
         {
+            using var activity = BudgetTelemetry.StartRabbitMqConsumeActivity(
+                eventArgs.BasicProperties.Headers,
+                eventArgs.BasicProperties.MessageId);
+
             try
             {
                 var integrationEvent = JsonSerializer.Deserialize<ExpenseApprovedIntegrationEvent>(
@@ -103,11 +108,18 @@ internal sealed class ExpenseApprovedConsumer(
                     logger.LogWarning(
                         "RabbitMQ message {MessageId} contains an invalid expense approval event",
                         eventArgs.BasicProperties.MessageId);
+                    BudgetTelemetry.SetOutcome(activity, "dead_letter");
+                    BudgetTelemetry.RecordRabbitMqMessage("consume", "dead_letter");
                     await MoveToDeadLetterAsync(channel, eventArgs, stoppingToken);
                     return;
                 }
 
-                await processor.ProcessAsync(integrationEvent, stoppingToken);
+                var wasProcessed = await processor.ProcessAsync(
+                    integrationEvent,
+                    stoppingToken);
+                var outcome = wasProcessed ? "processed" : "duplicate";
+                BudgetTelemetry.SetOutcome(activity, outcome);
+                BudgetTelemetry.RecordRabbitMqMessage("consume", outcome);
 
                 await channel.BasicAckAsync(
                     eventArgs.DeliveryTag,
@@ -120,6 +132,9 @@ internal sealed class ExpenseApprovedConsumer(
                     exception,
                     "RabbitMQ message {MessageId} is not valid JSON",
                     eventArgs.BasicProperties.MessageId);
+                BudgetTelemetry.SetError(activity, exception);
+                BudgetTelemetry.SetOutcome(activity, "dead_letter");
+                BudgetTelemetry.RecordRabbitMqMessage("consume", "dead_letter");
                 await MoveToDeadLetterAsync(channel, eventArgs, stoppingToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -135,6 +150,9 @@ internal sealed class ExpenseApprovedConsumer(
                         eventArgs.BasicProperties.MessageId,
                         attemptCount + 1,
                         options.MaxRetryAttempts);
+                    BudgetTelemetry.SetError(activity, exception);
+                    BudgetTelemetry.SetOutcome(activity, "retry");
+                    BudgetTelemetry.RecordRabbitMqMessage("consume", "retry");
                     await channel.BasicNackAsync(
                         eventArgs.DeliveryTag,
                         multiple: false,
@@ -148,6 +166,9 @@ internal sealed class ExpenseApprovedConsumer(
                         "RabbitMQ message {MessageId} exhausted {MaxRetryAttempts} retries and will be dead-lettered",
                         eventArgs.BasicProperties.MessageId,
                         options.MaxRetryAttempts);
+                    BudgetTelemetry.SetError(activity, exception);
+                    BudgetTelemetry.SetOutcome(activity, "dead_letter");
+                    BudgetTelemetry.RecordRabbitMqMessage("consume", "dead_letter");
                     await MoveToDeadLetterAsync(channel, eventArgs, stoppingToken);
                 }
             }

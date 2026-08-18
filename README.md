@@ -6,7 +6,7 @@ O primeiro módulo, `AdminFlow.Budget`, modela gestão orçamentária, solicita�
 
 ## Estado atual
 
-A Fase 9 — Confiabilidade do RabbitMQ está concluída. O consumidor possui acknowledgement manual, retry limitado, DLQ e idempotência persistida no PostgreSQL.
+A Fase 10 — Observabilidade está concluída. A aplicação produz traces e métricas com OpenTelemetry para ASP.NET Core, PostgreSQL e RabbitMQ.
 
 Atualmente o projeto possui:
 
@@ -22,7 +22,7 @@ Atualmente o projeto possui:
 - publicação e consumo do evento `ExpenseApproved` com RabbitMQ;
 - testes unitários, de Application e de integração.
 
-Ainda não existem endpoints HTTP de negócio para criar ou decidir solicitações. A API expõe apenas recursos técnicos, como health check e Swagger. A próxima fase planejada introduz observabilidade com OpenTelemetry.
+Ainda não existem endpoints HTTP de negócio para criar ou decidir solicitações. A API expõe apenas recursos técnicos, como health check e Swagger. A próxima fase planejada introduz autenticação e autorização progressivamente.
 
 ## Domínio
 
@@ -93,6 +93,7 @@ O `Domain` não depende de ASP.NET Core, Entity Framework Core, PostgreSQL, Seri
 - Serilog;
 - RabbitMQ 4.1;
 - RabbitMQ.Client 7;
+- OpenTelemetry;
 - xUnit.
 
 ## Pré-requisitos
@@ -208,6 +209,28 @@ A implementação usa confirmação manual: mensagens válidas recebem `Ack` som
 
 O `EventId` de cada mensagem concluída é armazenado em `processed_integration_events`. Uma entrega duplicada é confirmada sem executar novamente o handler. Ainda não existem publisher confirms ou Outbox transacional.
 
+## Observabilidade
+
+OpenTelemetry coleta traces de ASP.NET Core, `HttpClient`, PostgreSQL e dos fluxos RabbitMQ. Métricas incluem runtime .NET, HTTP, conexões/operações Npgsql e resultados das mensagens.
+
+Para visualizar localmente no console:
+
+```powershell
+$env:OpenTelemetry__Exporters__Console__Enabled="true"
+dotnet run --project src/AdminFlow.Budget.Api
+```
+
+Para enviar traces e métricas a um Collector compatível com OTLP:
+
+```powershell
+$env:OpenTelemetry__Exporters__Otlp__Enabled="true"
+$env:OpenTelemetry__Exporters__Otlp__Endpoint="http://localhost:4317"
+
+dotnet run --project src/AdminFlow.Budget.Api
+```
+
+Endpoints remotos precisam usar HTTPS. Headers de autenticação OTLP devem ser fornecidos por variáveis de ambiente e nunca versionados.
+
 ## Compilação e testes
 
 Compilar toda a Solution:
@@ -233,11 +256,11 @@ $env:ADMINFLOW_TEST_RABBITMQ_PASSWORD="escolha-outra-senha-local"
 dotnet test AdminFlow.sln
 ```
 
-Na conclusão da Fase 9, o resultado validado foi:
+Na conclusão da Fase 10, o resultado validado foi:
 
 - 53 testes unitários e de Application;
-- 32 testes de integração;
-- 85 testes aprovados;
+- 35 testes de integração;
+- 88 testes aprovados;
 - 0 falhas;
 - build com 0 erros e 0 avisos.
 
@@ -267,7 +290,7 @@ Na conclusão da Fase 9, o resultado validado foi:
 - [x] logging estruturado;
 - [x] fundamentos de RabbitMQ;
 - [x] confiabilidade do RabbitMQ — acknowledgement manual, retry, DLQ e idempotência;
-- [ ] OpenTelemetry;
+- [x] OpenTelemetry — traces, métricas e propagação RabbitMQ;
 - [ ] autenticação e autorização;
 - [ ] AdminFlow.People;
 - [ ] integração entre os sistemas.

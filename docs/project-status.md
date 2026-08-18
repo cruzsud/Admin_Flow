@@ -2,85 +2,92 @@
 
 ## Fase Atual
 
-Fase 9 — Confiabilidade do RabbitMQ
+Fase 10 — Observabilidade com OpenTelemetry
 
 ## Status
 
-CONCLUÍDA — Etapas 9.1, 9.2 e 9.3 concluídas
+CONCLUÍDA
 
 ## Implementado
 
-- Acknowledgement manual depois do processamento.
-- Retry limitado com fila de espera, TTL e contagem pelo cabeçalho `x-death`.
-- Dead-letter queue para mensagens inválidas ou com tentativas esgotadas.
-- Processador idempotente baseado no `EventId` do evento.
-- Tabela técnica `processed_integration_events`, com chave primária em `event_id`.
-- Transação que desfaz a marcação quando o handler falha.
-- Proteção contra duplicatas sequenciais e concorrentes pelo PostgreSQL.
-- Migration `AddProcessedIntegrationEvents`.
-- ADRs 006, 007 e 008 documentando as decisões de confiabilidade.
+- OpenTelemetry SDK configurado na API para traces e métricas.
+- Resource com nome, versão e ambiente do serviço.
+- Traces automáticos de ASP.NET Core, `HttpClient` e Npgsql.
+- Métricas de ASP.NET Core, `HttpClient`, runtime .NET e Npgsql.
+- Spans manuais para publicação e consumo de `ExpenseApproved` no RabbitMQ.
+- Propagação W3C de `traceparent` e `tracestate` nos headers da mensagem.
+- Contador `adminflow.budget.rabbitmq.messages` por operação e resultado.
+- Sampling configurável, usando decisão do trace pai.
+- Exportadores Console e OTLP opcionais e desabilitados por padrão.
+- `NpgsqlDataSource` nomeado para impedir que a connection string identifique o pool nas métricas.
+- ADR-009 documentando o escopo e os trade-offs.
 
 ## Arquitetura Atual
 
 ```text
-RabbitMQ
-  -> ExpenseApprovedConsumer
-  -> valida contrato
-  -> IdempotentExpenseApprovedIntegrationEventProcessor
-       -> inicia transação PostgreSQL
-       -> insere EventId único
-       -> executa handler
-       -> commit
-  -> Ack
+ASP.NET Core ─┐
+HttpClient ───┤
+Npgsql ───────┼→ OpenTelemetry SDK → Console opcional
+RabbitMQ ─────┘                    → OTLP opcional
 ```
 
-Uma duplicata encontra a chave já persistida, não executa o handler e recebe `Ack`. Se o handler falhar, a transação é revertida e a política de retry continua aplicável.
+```text
+trace HTTP
+  -> span PostgreSQL
+  -> span RabbitMQ publish
+       -> traceparent na mensagem
+       -> span RabbitMQ consume
+            -> span PostgreSQL da idempotência
+```
+
+Domain e Application permanecem sem dependência do SDK. A instrumentação manual na Infrastructure utiliza as APIs nativas `ActivitySource` e `Meter`; a API registra listeners e exportadores.
 
 ## Testes
 
-- primeira entrega é processada e registrada;
-- duplicata sequencial não chama o handler novamente;
-- duplicatas concorrentes resultam em uma única chamada;
-- falha do handler reverte a marcação e permite retry;
-- regressões de acknowledgement, retry e DLQ continuam protegidas;
+- produtor e consumidor compartilham o mesmo TraceId após propagação;
+- span consumidor referencia o span produtor como pai;
+- métrica RabbitMQ contém somente operação e resultado controlados;
+- baggage arbitrário não é propagado na mensagem;
+- providers de trace e métricas são registrados no host;
+- regressões completas com PostgreSQL e RabbitMQ reais;
 - 53 testes unitários/Application;
-- 32 testes de integração/técnicos com PostgreSQL e RabbitMQ reais;
-- total: 85 aprovados, 0 falhas, 0 ignorados.
+- 35 testes de integração/técnicos;
+- total: 88 aprovados, 0 falhas, 0 ignorados.
 
 ## Segurança
 
-- A tabela técnica armazena somente `EventId`, tipo e instante do processamento.
-- Corpo das mensagens e credenciais não são registrados.
-- Consultas e inserções continuam parametrizadas pelo EF Core.
-- Nenhum pacote novo foi adicionado nesta etapa.
+- Corpo de mensagens, parâmetros SQL, senhas e connection strings não são adicionados manualmente à telemetria.
+- Baggage não é propagado para evitar transportar dados arbitrários.
+- Nome fixo do pool Npgsql evita expor a connection string nas métricas.
+- Endpoint OTLP remoto exige HTTPS; HTTP é permitido somente para loopback local.
+- Credenciais/headers OTLP devem ser fornecidos por variáveis de ambiente.
 
 ## Decisões Importantes
 
-- A idempotência pertence à Infrastructure e não altera o Domain financeiro.
-- PostgreSQL foi reutilizado em vez de adicionar Redis.
-- A chave primária fornece exclusão concorrente, evitando o padrão inseguro de apenas consultar antes de inserir.
-- A marcação e o handler ficam dentro de uma transação para permitir rollback em falhas.
-- `AddDbContextFactory` fornece contextos independentes ao consumidor hospedado e mantém o `BudgetDbContext` disponível por escopo para os casos de uso atuais.
+- Console é apenas didático; OTLP é o protocolo preparado para integração com backends.
+- Nenhum Collector, Jaeger, Prometheus ou Grafana foi adicionado nesta fase.
+- Logs continuam no Serilog; não foram duplicados pelo pipeline OpenTelemetry.
+- Tags de métricas usam valores de baixa cardinalidade.
+- Sampling padrão é 100% para aprendizado e deve ser reduzido conforme volume e política do ambiente.
 
 ## Problemas Conhecidos
 
-- A garantia cobre a marcação no PostgreSQL, mas não torna atômicos efeitos externos como HTTP, arquivo ou log; esses efeitos ainda podem repetir após uma queda no instante crítico.
-- A tabela de eventos processados ainda não possui política de retenção.
-- O republish explícito para a DLQ ainda não usa publisher confirms.
-- Existe janela de falha entre o commit da aprovação e a publicação do evento; Outbox ainda não foi implementado.
-- Producer abre conexão/canal por publicação.
-- Ainda não há endpoint HTTP de negócio.
+- Não há backend visual ou retenção de telemetria configurados.
+- Tracing do Npgsql segue convenções que ainda podem evoluir entre versões.
+- Sampling de 100% pode ser caro em produção.
+- O republish para DLQ ainda não usa publisher confirms.
+- Existe janela entre commit da aprovação e publicação; Outbox não foi implementado.
+- Ainda não há endpoints HTTP de negócio.
 
 ## Trabalho Adiado
 
-- Política de retenção da inbox técnica.
-- Avaliação de Outbox e publisher confirms.
-- Backoff progressivo e operação/monitoramento da DLQ.
-- Reconexão e reutilização de conexão/canal.
-- Endpoints, autenticação e autorização.
+- Escolha e configuração de backend/Collector de observabilidade.
+- Dashboards, alertas e política de retenção.
+- Outbox, publisher confirms e retenção da inbox técnica.
+- Endpoints HTTP de negócio.
 
 ## Próxima Fase
 
-Fase 10 — Observabilidade com OpenTelemetry
+Fase 11 — Segurança
 
-Introduzir traces e métricas somente para os componentes já existentes, começando pelo problema concreto de correlacionar execução da API, PostgreSQL e RabbitMQ. Não iniciar sem autorização explícita.
+Introduzir autenticação e autorização progressivamente, associadas a casos de uso concretos. Não iniciar sem autorização explícita.

@@ -4,6 +4,7 @@ using AdminFlow.Budget.Infrastructure.Messaging;
 using AdminFlow.Budget.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 
 namespace AdminFlow.Budget.Infrastructure;
 
@@ -16,8 +17,17 @@ public static class DependencyInjection
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
-        services.AddDbContextFactory<BudgetDbContext>(options =>
-            options.UseNpgsql(connectionString));
+        services.AddSingleton(_ =>
+        {
+            var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString)
+            {
+                Name = "AdminFlow.Budget.Database"
+            };
+            return dataSourceBuilder.Build();
+        });
+        services.AddDbContextFactory<BudgetDbContext>((serviceProvider, options) =>
+            options.UseNpgsql(
+                serviceProvider.GetRequiredService<NpgsqlDataSource>()));
         services.AddScoped<IExpenseApprovalStore>(services =>
             services.GetRequiredService<BudgetDbContext>());
         services.AddScoped<ExpenseApprovalService>();

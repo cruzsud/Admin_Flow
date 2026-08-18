@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using AdminFlow.Budget.Application.IntegrationEvents;
 using AdminFlow.Budget.Infrastructure;
@@ -57,6 +59,10 @@ public sealed class RabbitMqExpenseApprovedPublisherTests
             250.50m,
             "BRL",
             DateTimeOffset.UtcNow);
+        using var parentActivity = new Activity("approval-request")
+            .SetIdFormat(ActivityIdFormat.W3C)
+            .AddBaggage("sensitive-example", "must-not-be-propagated")
+            .Start();
 
         await publisher.PublishAsync(integrationEvent);
 
@@ -65,6 +71,13 @@ public sealed class RabbitMqExpenseApprovedPublisherTests
         var received = JsonSerializer.Deserialize<ExpenseApprovedIntegrationEvent>(
             delivery.Body.Span);
         Assert.Equal(integrationEvent, received);
+        var headers = Assert.IsAssignableFrom<IDictionary<string, object?>>(
+            delivery.BasicProperties.Headers);
+        Assert.True(headers.TryGetValue("traceparent", out var traceParent));
+        Assert.Contains(
+            parentActivity.TraceId.ToString(),
+            Encoding.ASCII.GetString(Assert.IsType<byte[]>(traceParent)));
+        Assert.False(headers.ContainsKey("baggage"));
 
         await channel.QueueDeleteAsync(Queue);
     }

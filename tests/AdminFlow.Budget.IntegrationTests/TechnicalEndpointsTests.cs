@@ -1,21 +1,34 @@
 using System.Net;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 namespace AdminFlow.Budget.IntegrationTests;
 
 public sealed class TechnicalEndpointsTests : IClassFixture<WebApplicationFactory<Program>>
 {
     private readonly HttpClient _client;
+    private readonly WebApplicationFactory<Program> _factory;
 
     public TechnicalEndpointsTests(WebApplicationFactory<Program> factory)
     {
-        _client = factory
+        _factory = factory
             .WithWebHostBuilder(builder => builder.UseEnvironment("Development"))
+            ;
+        _client = _factory
             .CreateClient(new WebApplicationFactoryClientOptions
             {
                 BaseAddress = new Uri("https://localhost")
             });
+    }
+
+    [Fact]
+    public void Observability_WhenApplicationStarts_ShouldRegisterTraceAndMetricProviders()
+    {
+        Assert.NotNull(_factory.Services.GetService<TracerProvider>());
+        Assert.NotNull(_factory.Services.GetService<MeterProvider>());
     }
 
     [Fact]

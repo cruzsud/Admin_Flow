@@ -1,5 +1,6 @@
 using System.Text.Json;
 using AdminFlow.Budget.Application.IntegrationEvents;
+using AdminFlow.Budget.Infrastructure.Observability;
 using RabbitMQ.Client;
 
 namespace AdminFlow.Budget.Infrastructure.Messaging;
@@ -10,6 +11,28 @@ internal sealed class RabbitMqExpenseApprovedPublisher(RabbitMqOptions options)
     public async Task PublishAsync(
         ExpenseApprovedIntegrationEvent integrationEvent,
         CancellationToken cancellationToken = default)
+    {
+        using var activity = BudgetTelemetry.StartRabbitMqPublishActivity(
+            integrationEvent.EventId);
+
+        try
+        {
+            await PublishCoreAsync(integrationEvent, cancellationToken);
+            BudgetTelemetry.SetOutcome(activity, "published");
+            BudgetTelemetry.RecordRabbitMqMessage("publish", "published");
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            BudgetTelemetry.SetError(activity, exception);
+            BudgetTelemetry.SetOutcome(activity, "failed");
+            BudgetTelemetry.RecordRabbitMqMessage("publish", "failed");
+            throw;
+        }
+    }
+
+    private async Task PublishCoreAsync(
+        ExpenseApprovedIntegrationEvent integrationEvent,
+        CancellationToken cancellationToken)
     {
         var factory = CreateConnectionFactory();
         await using var connection = await factory.CreateConnectionAsync(cancellationToken);
@@ -27,8 +50,10 @@ internal sealed class RabbitMqExpenseApprovedPublisher(RabbitMqOptions options)
         {
             ContentType = "application/json",
             DeliveryMode = DeliveryModes.Persistent,
-            MessageId = integrationEvent.EventId.ToString()
+            MessageId = integrationEvent.EventId.ToString(),
+            Headers = new Dictionary<string, object?>()
         };
+        BudgetTelemetry.InjectTraceContext(properties.Headers);
 
         await channel.BasicPublishAsync(
             RabbitMqTopology.Exchange,

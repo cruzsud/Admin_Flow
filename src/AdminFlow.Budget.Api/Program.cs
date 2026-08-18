@@ -1,3 +1,4 @@
+using AdminFlow.Budget.Api.Observability;
 using AdminFlow.Budget.Infrastructure;
 using AdminFlow.Budget.Infrastructure.Messaging;
 using Microsoft.OpenApi;
@@ -29,6 +30,7 @@ var rabbitMqOptions = new RabbitMqOptions
 };
 
 builder.Services.AddInfrastructure(connectionString, rabbitMqOptions);
+builder.Services.AddAdminFlowOpenTelemetry(builder.Configuration, builder.Environment);
 builder.Services.AddHealthChecks();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>

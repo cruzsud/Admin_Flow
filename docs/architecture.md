@@ -220,6 +220,31 @@ Eventos de aprovação e rejeição são emitidos em `Information` somente depoi
 
 O middleware de requisição gera um evento por chamada HTTP com método, caminho, status e duração. Corpo, query string e headers não são enriquecidos nesta fase para reduzir risco de exposição. Persistência em arquivo ou serviço externo também foi adiada; o sink inicial é apenas o console.
 
+## Observabilidade com OpenTelemetry
+
+```text
+ASP.NET Core Activity
+  -> Npgsql Activity
+  -> RabbitMQ producer Activity
+       -> traceparent/tracestate
+       -> RabbitMQ consumer Activity
+            -> Npgsql Activity
+
+Meters
+  -> ASP.NET Core / HttpClient / runtime / Npgsql
+  -> AdminFlow.Budget (resultados RabbitMQ)
+```
+
+A API registra o SDK, o resource do serviço, sampling e exportadores. Instrumentações automáticas capturam HTTP e PostgreSQL. A Infrastructure cria spans e métricas de mensageria usando `ActivitySource` e `Meter`, APIs do próprio .NET; assim, Domain e Application continuam independentes de OpenTelemetry.
+
+O publisher injeta somente `traceparent` e `tracestate` nos headers RabbitMQ. O consumer extrai esse contexto e cria um span filho, permitindo que um backend reconstrua a relação entre produção e consumo. Baggage arbitrário não é propagado.
+
+O contador `adminflow.budget.rabbitmq.messages` usa apenas as dimensões controladas `messaging.operation` e `messaging.outcome`. Resultados possíveis incluem `published`, `failed`, `processed`, `duplicate`, `retry` e `dead_letter`, evitando cardinalidade ilimitada em métricas.
+
+Para métricas Npgsql, a aplicação usa um `NpgsqlDataSource` chamado `AdminFlow.Budget.Database`. Sem esse nome, o driver poderia identificar o pool pela connection string, que pode conter senha. O tracing não habilita logging de valores dos parâmetros SQL.
+
+Console e OTLP são opcionais. Console existe apenas para aprendizado local; OTLP permite integrar posteriormente um Collector ou backend sem acoplar o código a Jaeger, Prometheus ou fornecedor específico. Endpoints OTLP remotos precisam usar HTTPS.
+
 ## Roadmap revisado
 
 | Fase | Conteúdo | Observação |
