@@ -9,7 +9,8 @@ namespace AdminFlow.Budget.Infrastructure.Messaging;
 
 internal sealed class ExpenseApprovedConsumer(
     RabbitMqOptions options,
-    ILogger<ExpenseApprovedConsumer> logger) : BackgroundService
+    ILogger<ExpenseApprovedConsumer> logger,
+    IExpenseApprovedIntegrationEventHandler handler) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -31,16 +32,61 @@ internal sealed class ExpenseApprovedConsumer(
             durable: true,
             autoDelete: false,
             cancellationToken: stoppingToken);
+        await channel.ExchangeDeclareAsync(
+            RabbitMqTopology.RetryExchange,
+            ExchangeType.Direct,
+            durable: true,
+            autoDelete: false,
+            cancellationToken: stoppingToken);
+        await channel.ExchangeDeclareAsync(
+            RabbitMqTopology.DeadLetterExchange,
+            ExchangeType.Direct,
+            durable: true,
+            autoDelete: false,
+            cancellationToken: stoppingToken);
         await channel.QueueDeclareAsync(
             RabbitMqTopology.Queue,
             durable: true,
             exclusive: false,
             autoDelete: false,
+            arguments: new Dictionary<string, object?>
+            {
+                ["x-dead-letter-exchange"] = RabbitMqTopology.RetryExchange,
+                ["x-dead-letter-routing-key"] = RabbitMqTopology.RetryRoutingKey
+            },
             cancellationToken: stoppingToken);
         await channel.QueueBindAsync(
             RabbitMqTopology.Queue,
             RabbitMqTopology.Exchange,
             RabbitMqTopology.RoutingKey,
+            cancellationToken: stoppingToken);
+        await channel.QueueDeclareAsync(
+            RabbitMqTopology.RetryQueue,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: new Dictionary<string, object?>
+            {
+                ["x-message-ttl"] = options.RetryDelayMilliseconds,
+                ["x-dead-letter-exchange"] = RabbitMqTopology.Exchange,
+                ["x-dead-letter-routing-key"] = RabbitMqTopology.RoutingKey
+            },
+            cancellationToken: stoppingToken);
+        await channel.QueueBindAsync(
+            RabbitMqTopology.RetryQueue,
+            RabbitMqTopology.RetryExchange,
+            RabbitMqTopology.RetryRoutingKey,
+            cancellationToken: stoppingToken);
+        await channel.QueueDeclareAsync(
+            RabbitMqTopology.DeadLetterQueue,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            cancellationToken: stoppingToken);
+        await channel.QueueBindAsync(
+            RabbitMqTopology.DeadLetterQueue,
+            RabbitMqTopology.DeadLetterExchange,
+            RabbitMqTopology.DeadLetterRoutingKey,
             cancellationToken: stoppingToken);
 
         var consumer = new AsyncEventingBasicConsumer(channel);
@@ -57,20 +103,11 @@ internal sealed class ExpenseApprovedConsumer(
                     logger.LogWarning(
                         "RabbitMQ message {MessageId} contains an invalid expense approval event",
                         eventArgs.BasicProperties.MessageId);
-                    await channel.BasicNackAsync(
-                        eventArgs.DeliveryTag,
-                        multiple: false,
-                        requeue: false,
-                        stoppingToken);
+                    await MoveToDeadLetterAsync(channel, eventArgs, stoppingToken);
                     return;
                 }
 
-                logger.LogInformation(
-                    "Integration event {EventId} for expense request {ExpenseRequestId} " +
-                    "and budget {BudgetId} was consumed",
-                    integrationEvent.EventId,
-                    integrationEvent.ExpenseRequestId,
-                    integrationEvent.BudgetId);
+                await handler.HandleAsync(integrationEvent, stoppingToken);
 
                 await channel.BasicAckAsync(
                     eventArgs.DeliveryTag,
@@ -83,23 +120,36 @@ internal sealed class ExpenseApprovedConsumer(
                     exception,
                     "RabbitMQ message {MessageId} is not valid JSON",
                     eventArgs.BasicProperties.MessageId);
-                await channel.BasicNackAsync(
-                    eventArgs.DeliveryTag,
-                    multiple: false,
-                    requeue: false,
-                    stoppingToken);
+                await MoveToDeadLetterAsync(channel, eventArgs, stoppingToken);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                logger.LogError(
-                    exception,
-                    "Failed to process RabbitMQ message {MessageId}; returning it to the queue",
-                    eventArgs.BasicProperties.MessageId);
-                await channel.BasicNackAsync(
-                    eventArgs.DeliveryTag,
-                    multiple: false,
-                    requeue: true,
-                    stoppingToken);
+                var attemptCount = RabbitMqRetryCounter.GetAttemptCount(
+                    eventArgs.BasicProperties);
+
+                if (attemptCount < options.MaxRetryAttempts)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Failed to process RabbitMQ message {MessageId}; scheduling retry {RetryAttempt} of {MaxRetryAttempts}",
+                        eventArgs.BasicProperties.MessageId,
+                        attemptCount + 1,
+                        options.MaxRetryAttempts);
+                    await channel.BasicNackAsync(
+                        eventArgs.DeliveryTag,
+                        multiple: false,
+                        requeue: false,
+                        stoppingToken);
+                }
+                else
+                {
+                    logger.LogError(
+                        exception,
+                        "RabbitMQ message {MessageId} exhausted {MaxRetryAttempts} retries and will be dead-lettered",
+                        eventArgs.BasicProperties.MessageId,
+                        options.MaxRetryAttempts);
+                    await MoveToDeadLetterAsync(channel, eventArgs, stoppingToken);
+                }
             }
         };
 
@@ -110,5 +160,31 @@ internal sealed class ExpenseApprovedConsumer(
             stoppingToken);
 
         await Task.Delay(Timeout.Infinite, stoppingToken);
+    }
+
+    private static async Task MoveToDeadLetterAsync(
+        IChannel channel,
+        BasicDeliverEventArgs eventArgs,
+        CancellationToken cancellationToken)
+    {
+        var properties = new BasicProperties
+        {
+            ContentType = eventArgs.BasicProperties.ContentType,
+            DeliveryMode = eventArgs.BasicProperties.DeliveryMode,
+            MessageId = eventArgs.BasicProperties.MessageId,
+            Headers = eventArgs.BasicProperties.Headers
+        };
+
+        await channel.BasicPublishAsync(
+            RabbitMqTopology.DeadLetterExchange,
+            RabbitMqTopology.DeadLetterRoutingKey,
+            mandatory: false,
+            properties,
+            eventArgs.Body,
+            cancellationToken);
+        await channel.BasicAckAsync(
+            eventArgs.DeliveryTag,
+            multiple: false,
+            cancellationToken);
     }
 }

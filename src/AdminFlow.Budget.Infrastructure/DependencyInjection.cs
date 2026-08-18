@@ -27,8 +27,13 @@ public static class DependencyInjection
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(rabbitMqOptions.UserName);
             ArgumentException.ThrowIfNullOrWhiteSpace(rabbitMqOptions.Password);
+            ArgumentOutOfRangeException.ThrowIfNegative(rabbitMqOptions.MaxRetryAttempts);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(
+                rabbitMqOptions.RetryDelayMilliseconds);
             services.AddSingleton(rabbitMqOptions);
             services.AddSingleton<IExpenseApprovedPublisher, RabbitMqExpenseApprovedPublisher>();
+            services.AddSingleton<IExpenseApprovedIntegrationEventHandler,
+                LoggingExpenseApprovedIntegrationEventHandler>();
             services.AddHostedService<ExpenseApprovedConsumer>();
         }
         else

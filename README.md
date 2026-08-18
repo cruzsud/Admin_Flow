@@ -6,7 +6,7 @@ O primeiro módulo, `AdminFlow.Budget`, modela gestão orçamentária, solicita�
 
 ## Estado atual
 
-A Fase 8 — Fundamentos de RabbitMQ está concluída.
+A Fase 9 — Confiabilidade do RabbitMQ está em andamento. As etapas de acknowledgement manual e retry/DLQ estão concluídas; idempotência é o próximo incremento.
 
 Atualmente o projeto possui:
 
@@ -171,6 +171,9 @@ Para habilitar RabbitMQ:
 $env:RabbitMq__Enabled="true"
 $env:RabbitMq__UserName="adminflow"
 $env:RabbitMq__Password="escolha-outra-senha-local"
+# Opcionais: padrões de 3 retries e 5000 ms
+$env:RabbitMq__MaxRetryAttempts="3"
+$env:RabbitMq__RetryDelayMilliseconds="5000"
 
 dotnet run --project src/AdminFlow.Budget.Api
 ```
@@ -201,7 +204,7 @@ ExpenseApprovedConsumer
 
 O evento transporta identificadores, valor, moeda e instante da aprovação. Ele não transporta descrição, motivo de rejeição ou credenciais.
 
-A implementação usa confirmação manual: mensagens válidas recebem `Ack` somente depois do processamento. Ainda não existem retry com atraso e limite, dead-letter queue, idempotência ou Outbox transacional.
+A implementação usa confirmação manual: mensagens válidas recebem `Ack` somente depois do processamento. Falhas transitórias passam por uma fila de retry com intervalo e limite configuráveis; mensagens inválidas ou que esgotam as tentativas seguem para uma dead-letter queue. Ainda não existem idempotência, publisher confirms ou Outbox transacional.
 
 ## Compilação e testes
 
@@ -228,11 +231,11 @@ $env:ADMINFLOW_TEST_RABBITMQ_PASSWORD="escolha-outra-senha-local"
 dotnet test AdminFlow.sln
 ```
 
-Na conclusão da Fase 8, o resultado validado foi:
+Na conclusão da Etapa 9.2, o resultado validado foi:
 
 - 53 testes unitários e de Application;
-- 16 testes de integração;
-- 69 testes aprovados;
+- 29 testes de integração;
+- 82 testes aprovados;
 - 0 falhas;
 - build com 0 erros e 0 avisos.
 
@@ -261,7 +264,7 @@ Na conclusão da Fase 8, o resultado validado foi:
 - [x] fluxo de aprovação;
 - [x] logging estruturado;
 - [x] fundamentos de RabbitMQ;
-- [ ] confiabilidade do RabbitMQ — acknowledgement manual concluído; retry, DLQ e idempotência pendentes;
+- [ ] confiabilidade do RabbitMQ — acknowledgement manual, retry e DLQ concluídos; idempotência pendente;
 - [ ] OpenTelemetry;
 - [ ] autenticação e autorização;
 - [ ] AdminFlow.People;

@@ -1,5 +1,7 @@
 # ADR-006: Acknowledgement manual no consumidor RabbitMQ
 
+> A política transitória de requeue e descarte descrita aqui foi substituída pelo retry limitado e pela DLQ do ADR-007. O acknowledgement manual permanece vigente.
+
 ## Contexto
 
 Com `autoAck=true`, o RabbitMQ considerava a mensagem concluída no momento da entrega. Uma interrupção durante desserialização ou processamento poderia causar perda sem possibilidade de nova entrega.

@@ -8,4 +8,6 @@ public sealed class RabbitMqOptions
     public string UserName { get; init; } = string.Empty;
     public string Password { get; init; } = string.Empty;
     public string VirtualHost { get; init; } = "/";
+    public int MaxRetryAttempts { get; init; } = 3;
+    public int RetryDelayMilliseconds { get; init; } = 5_000;
 }

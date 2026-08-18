@@ -21,7 +21,11 @@ var rabbitMqOptions = new RabbitMqOptions
     Port = builder.Configuration.GetValue("RabbitMq:Port", 5672),
     UserName = builder.Configuration["RabbitMq:UserName"] ?? string.Empty,
     Password = builder.Configuration["RabbitMq:Password"] ?? string.Empty,
-    VirtualHost = builder.Configuration["RabbitMq:VirtualHost"] ?? "/"
+    VirtualHost = builder.Configuration["RabbitMq:VirtualHost"] ?? "/",
+    MaxRetryAttempts = builder.Configuration.GetValue("RabbitMq:MaxRetryAttempts", 3),
+    RetryDelayMilliseconds = builder.Configuration.GetValue(
+        "RabbitMq:RetryDelayMilliseconds",
+        5_000)
 };
 
 builder.Services.AddInfrastructure(connectionString, rabbitMqOptions);

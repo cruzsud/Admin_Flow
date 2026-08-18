@@ -273,7 +273,18 @@ O evento contém `EventId`, `ExpenseRequestId`, `BudgetId`, `DecisionMakerId`, `
 
 Nesta fase, a publicação acontece depois do commit do PostgreSQL. Isso impede publicar uma aprovação não persistida, mas deixa uma janela de falha entre banco e broker.
 
-Na Fase 9.1, o consumidor passou a usar `autoAck=false`. Um evento válido recebe `BasicAck` somente depois do processamento. JSON ou contrato inválido recebe `BasicNack` sem retorno à fila; falha inesperada recebe `BasicNack` com retorno. O corpo bruto nunca é registrado. Retry com atraso e limite, DLQ, idempotência e uma possível estratégia Outbox continuam pendentes nos próximos incrementos da Fase 9.
+Na Fase 9.1, o consumidor passou a usar `autoAck=false`. Um evento válido recebe `BasicAck` somente depois do processamento.
+
+Na Fase 9.2, falhas transitórias deixaram de usar requeue imediato. A fila principal encaminha a mensagem para uma fila de retry, cujo TTL introduz um intervalo antes de devolvê-la à fila principal. O consumidor conta as mortes na fila principal pelo cabeçalho `x-death`; após o limite configurado, encaminha a mensagem para a DLQ. JSON ou contrato inválido segue diretamente para a DLQ. O padrão inicial é 3 retries com intervalo fixo de 5 segundos.
+
+```text
+adminflow.budget.expense-approved
+  ├── falha transitória -> adminflow.budget.expense-approved.retry
+  │                         └── TTL -> fila principal
+  └── inválida/esgotada -> adminflow.budget.expense-approved.dead-letter
+```
+
+O corpo bruto nunca é registrado. Idempotência, uma possível estratégia Outbox e publisher confirms continuam pendentes nos próximos incrementos. O republish explícito para a DLQ seguido de `Ack` possui uma janela de perda caso o broker falhe antes de confirmar internamente a publicação.
 
 O evento comunica um fato já confirmado; o consumidor não participa da decisão síncrona de aprovação. Antes de implementar será necessário decidir como evitar a perda entre commit no banco e publicação (por exemplo, avaliar outbox), mas essa decisão não será antecipada na Fase 0. RabbitMQ não exige um microserviço publicador separado.
 

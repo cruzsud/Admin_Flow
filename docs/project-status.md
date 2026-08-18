@@ -6,76 +6,76 @@ Phase 9 — Confiabilidade do RabbitMQ
 
 ## Status
 
-IN PROGRESS — Etapa 9.1 concluída
+IN PROGRESS — Etapa 9.2 concluída
 
 ## Implementado nesta etapa
 
-- Consumidor alterado de `autoAck=true` para `autoAck=false`.
-- `BasicAck` somente depois de desserialização, validação e processamento.
-- `BasicNack` sem requeue para JSON ou contrato inválido.
-- `BasicNack` com requeue para falha inesperada potencialmente transitória.
-- Validação técnica de identificadores, valor positivo, moeda BRL e instante.
-- Logs de falha limitados ao `MessageId`; corpo bruto não é registrado.
-- ADR-006 documentando acknowledgement manual e trade-offs.
-- README e arquitetura atualizados.
+- Retry limitado para falhas transitórias, sem `requeue=true` imediato.
+- Fila de retry com TTL configurável; ao expirar, a mensagem retorna à fila principal.
+- Contagem de tentativas pelo cabeçalho `x-death` mantido pelo RabbitMQ.
+- Dead-letter queue (DLQ) para mensagens inválidas ou que esgotaram as tentativas.
+- Política padrão de 3 retries com intervalo de 5 segundos.
+- Handler separado da entrega para permitir simular sucesso e falha nos testes.
+- Validação das opções de retry durante a inicialização.
+- ADR-007 documentando topologia, política e trade-offs.
 
 ## Fluxo Atual
 
 ```text
-RabbitMQ entrega mensagem sem confirmação automática
-  ├── evento válido e processado -> Ack -> remove da fila
-  ├── JSON/contrato inválido ----> Nack sem requeue -> descarta
-  └── falha inesperada ----------> Nack com requeue -> nova entrega
+fila principal
+  ├── processada com sucesso -----------> Ack
+  ├── JSON/contrato inválido -----------> DLQ
+  └── falha transitória
+        ├── tentativas disponíveis ------> fila de retry --TTL--> fila principal
+        └── tentativas esgotadas --------> DLQ
 ```
 
 ## Testes
 
-- contrato completo aceito;
-- identificador vazio rejeitado;
-- valor zero ou negativo rejeitado;
-- moeda diferente de BRL rejeitada;
-- instante vazio rejeitado;
-- evento válido consumido e removido da fila após confirmação;
-- JSON inválido rejeitado sem retornar à fila;
-- 53 testes unitários/Application existentes;
-- 24 testes de integração/técnicos esperados com infraestrutura completa;
-- total esperado: 77 aprovados, 0 falhas, 0 ignorados.
+- mensagem válida é processada e confirmada;
+- mensagem inválida é encaminhada à DLQ;
+- falha transitória é repetida e concluída com sucesso;
+- esgotamento do limite encaminha a mensagem à DLQ;
+- contagem de `x-death` considera somente mortes na fila principal;
+- 53 testes unitários/Application;
+- 29 testes de integração/técnicos com PostgreSQL e RabbitMQ reais;
+- total: 82 aprovados, 0 falhas, 0 ignorados.
 
 ## Segurança
 
-- Corpo de mensagem inválida não é registrado.
+- Corpo das mensagens não é registrado nos logs.
 - Credenciais continuam fora do repositório.
 - Mensagens são validadas antes do processamento.
 - Nenhum pacote novo foi adicionado nesta etapa.
+- A DLQ contém dados financeiros do evento e deve ter acesso operacional restrito.
 
 ## Decisões Importantes
 
-- A Fase 9 foi dividida para introduzir um conceito de confiabilidade por vez.
-- Mensagem inválida não retorna à fila para evitar loop infinito.
-- Falha inesperada retorna temporariamente à fila, ainda sem limite ou atraso.
-- ADR-006 registra a política atual de Ack/Nack.
+- A fila principal usa dead-letter exchange para encaminhar falhas à fila de retry.
+- A fila de retry usa TTL e devolve as mensagens à exchange principal.
+- O número de mortes na fila principal, registrado em `x-death`, define o limite.
+- Mensagens inválidas não consomem retries e seguem diretamente para a DLQ.
+- O padrão inicial é intervalo fixo; backoff progressivo foi adiado.
 
 ## Problemas Conhecidos
 
-- `requeue=true` pode causar repetição rápida e ilimitada.
-- Mensagem inválida é descartada porque a DLQ ainda não existe.
-- Não há retry com atraso, limite de tentativas ou backoff.
-- Não há idempotência.
+- O republish explícito para a DLQ ainda não usa publisher confirms; uma falha do broker entre publicação e `Ack` pode causar perda.
+- Filas duráveis criadas pela topologia anterior precisam ser recriadas ao adotar os novos argumentos de dead-letter; o Compose local não persiste dados do RabbitMQ, mas uma implantação real exigirá migração operacional.
+- Não há idempotência; uma mensagem pode produzir o mesmo efeito mais de uma vez.
 - Existe janela de falha entre commit do PostgreSQL e publicação.
 - Producer ainda abre conexão/canal por publicação.
 - Ainda não há endpoint HTTP de negócio.
 
 ## Trabalho Adiado
 
-- Retry limitado com atraso.
-- Dead-letter queue.
 - Idempotência do consumidor.
 - Avaliação de Outbox e publisher confirms.
+- Backoff progressivo e política operacional de retenção/alerta da DLQ.
 - Reconexão e reutilização de conexão/canal.
 - Endpoints, autenticação, autorização e OpenTelemetry.
 
 ## Próxima Etapa
 
-Phase 9.2 — Retry limitado e Dead-Letter Queue
+Phase 9.3 — Idempotência do consumidor
 
-Substituir o requeue imediato por uma política explícita com atraso, limite de tentativas e encaminhamento final para DLQ. Não iniciar sem autorização explícita.
+Impedir que uma nova entrega do mesmo evento repita seu efeito de negócio. Não iniciar sem autorização explícita.
